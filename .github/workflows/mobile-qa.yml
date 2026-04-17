@@ -4,7 +4,6 @@ on:
   workflow_dispatch:
   push:
     branches: [ main ]
-  pull_request:
 
 permissions:
   contents: write
@@ -14,19 +13,18 @@ permissions:
 jobs:
   appium-emulator:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
-
     env:
       APP_PATH: app/app.apk
-      # Jira Configuration - Updated to match your GitHub Secrets exactly
+      # From the SECRETS tab
       JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
       JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
       JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
-      JIRA_PROJECT_KEY: ${{ secrets.JIRA_PROJECT_KEY || 'QA' }}
-      # Feature Toggles
-      ENABLE_JIRA: "true"
-      ENABLE_CREATE_PR: "true"
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # From the VARIABLES tab
+      JIRA_PROJECT_KEY: ${{ vars.JIRA_PROJECT_KEY }}
+      JIRA_ISSUE_TYPE: ${{ vars.JIRA_ISSUE_TYPE }}
+      ENABLE_JIRA: ${{ vars.ENABLE_JIRA }}
+      ENABLE_CREATE_PR: ${{ vars.ENABLE_CREATE_PR }}
+      GH_TOKEN: ${{ secrets.TOKEN }}
 
     steps:
       - name: Checkout repository
@@ -36,62 +34,37 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: pip
 
       - name: Install Dependencies
         run: |
-          python -m pip install --upgrade pip
           pip install -r requirements.txt
           npm install -g appium
           appium driver install uiautomator2
 
       - name: Resolve APK from GitHub Release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p app
-          latest_release="$(gh release list --limit 1 --exclude-drafts --json tagName | jq -r '.[0].tagName')"
-          assets_json="$(gh release view "$latest_release" --json assets)"
-          ASSET_NAME=$(echo "$assets_json" | python3 -c "import json,sys; data=json.load(sys.stdin); print(next((a['name'] for a in data['assets'] if a['name'].lower().endswith('.apk')), ''))")
-          gh release download "$latest_release" --pattern "$ASSET_NAME" --output "$APP_PATH" --clobber
+          # Fetches the latest release APK automatically
+          latest_release="$(gh release list --limit 1 --json tagName | jq -r '.[0].tagName')"
+          gh release download "$latest_release" --pattern "*.apk" --output "$APP_PATH" --clobber
 
-      - name: Enable KVM
+      - name: Start Appium
         run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
+          nohup appium --base-path / > appium.log 2>&1 &
+          sleep 10
 
-      - name: Start Appium server
-        run: |
-          mkdir -p reports
-          nohup appium --base-path / > reports/appium.log 2>&1 &
-          for i in {1..10}; do
-            if curl -s http://127.0.0.1:4723/status; then break; fi
-            sleep 2
-          done
-
-      - name: Run Pytest on Emulator
+      - name: Run Tests on Emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 30
           target: google_apis
           arch: x86_64
           profile: pixel_6
-          # Added --reruns to handle potential UI flakiness
-          script: pytest --reruns 1
-
-      - name: Create PR on Success
-        if: success() && github.ref != 'refs/heads/main'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh pr create --title "QA Passed: ${{ github.sha }}" --body "Mobile automation tests passed for build ${{ github.run_number }}." --base main --head ${{ github.ref_name }}
+          script: pytest
 
       - name: Upload Artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: mobile-qa-reports-${{ github.run_number }}
-          path: |
-            reports/
-            allure-results/
+          name: reports
+          path: reports/
