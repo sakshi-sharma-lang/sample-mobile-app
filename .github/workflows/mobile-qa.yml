@@ -17,10 +17,17 @@ jobs:
     timeout-minutes: 45
 
     env:
+      # Core Paths - Fixed: Only one definition, correctly indented
       APP_PATH: app/app.apk
-      # Use these to target a specific release, or leave blank to auto-find the latest
-      APK_RELEASE_TAG: "" 
-      APK_ASSET_NAME: ""
+      
+      # APK Download Config
+      APK_URL: ${{ vars.APK_URL || secrets.APK_URL || '' }}
+      APK_RELEASE_TAG: ${{ vars.APK_RELEASE_TAG || 'v1.0.0' }}
+      APK_ASSET_NAME: ${{ vars.APK_ASSET_NAME || 'Android_Appium_Demo.apk' }}
+      
+      # Test Config
+      PYTEST_MARKERS: ${{ vars.PYTEST_MARKERS || 'smoke' }}
+      ANDROID_API_LEVEL: ${{ vars.ANDROID_API_LEVEL || '30' }}
       
       # Jira Configuration
       JIRA_URL: ${{ secrets.JIRA_URL }}
@@ -57,10 +64,10 @@ jobs:
           mkdir -p app
           echo "Searching for APK in GitHub Releases..."
           
-          # Logic to find the latest release tag and the first .apk asset
+          # Fetch release info using GitHub CLI
           latest_release="$(gh release view --repo ${{ github.repository }} --json tagName,assets)"
-          TAG=$(echo "$latest_release" | python3 -c "import json,sys; print(json.load(sys.stdin)['tagName'])")
-          ASSET=$(echo "$latest_release" | python3 -c "import json,sys; assets=json.load(sys.stdin)['assets']; print(next((asset['name'] for asset in assets if asset['name'].lower().endswith('.apk')), ''))")
+          TAG=$(echo "$latest_release" | python3 -c "import json,sys; data=json.load(sys.stdin); print(data['tagName'])")
+          ASSET=$(echo "$latest_release" | python3 -c "import json,sys; data=json.load(sys.stdin); assets=data['assets']; print(next((asset['name'] for asset in assets if asset['name'].lower().endswith('.apk')), ''))")
           
           if [ -z "$TAG" ] || [ -z "$ASSET" ]; then
             echo "::error::No APK found in GitHub Releases. Ensure you have a release with an .apk file."
@@ -85,12 +92,21 @@ jobs:
         run: |
           mkdir -p reports
           nohup appium --base-path / > reports/appium.log 2>&1 &
-          sleep 5
+          
+          # Health check for Appium
+          for i in {1..10}; do
+            if curl -s http://127.0.0.1:4723/status; then
+              echo "Appium is up!"
+              break
+            fi
+            echo "Waiting for Appium..."
+            sleep 2
+          done
 
       - name: Run Pytest on Emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 30
+          api-level: ${{ env.ANDROID_API_LEVEL }}
           target: google_apis
           arch: x86_64
           profile: pixel_6
@@ -101,13 +117,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh pr create --title "QA Passed: ${{ github.sha }}" --body "Mobile automation tests passed for this build." --base main --head ${{ github.ref_name }}
+          gh pr create --title "QA Passed: ${{ github.sha }}" --body "Mobile automation tests passed for build ${{ github.run_number }}." --base main --head ${{ github.ref_name }}
 
       - name: Upload Artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: mobile-qa-reports
+          name: mobile-qa-reports-${{ github.run_number }}
           path: |
             reports/
             allure-results/
