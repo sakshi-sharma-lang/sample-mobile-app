@@ -44,6 +44,19 @@ jobs:
           npm install -g appium
           appium driver install uiautomator2
 
+      - name: Resolve APK
+        run: |
+          mkdir -p app
+          # Find any apk in the app folder and rename it to app.apk for the automation
+          APK_FILE=$(find app -name "*.apk" | head -n 1)
+          if [ -n "$APK_FILE" ]; then
+            echo "Found APK: $APK_FILE, moving to $APP_PATH"
+            cp "$APK_FILE" "$APP_PATH"
+          else
+            echo "::error::No APK found in the 'app/' directory. Ensure your APK is committed to the repo."
+            exit 1
+          fi
+
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -66,7 +79,6 @@ jobs:
           script: pytest
 
       - name: Create PR on Success
-        # Only creates PR if tests pass AND we are NOT already on main
         if: success() && github.ref != 'refs/heads/main'
         env:
           GH_TOKEN: ${{ secrets.TOKEN }}
