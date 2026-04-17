@@ -2,7 +2,7 @@ import pytest
 from pathlib import Path
 from utils.driver_factory import create_driver
 from utils.jira_client import JiraClient
-from utils.driver_factory import get_driver as create_driver
+from utils.driver_factory import create_driver
 
 
 @pytest.fixture(scope="function")
