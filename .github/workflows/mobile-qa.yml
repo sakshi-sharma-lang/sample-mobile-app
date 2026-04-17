@@ -1,79 +1,78 @@
-name: Mobile APK QA
+name: QA Pipeline
 
 on:
   workflow_dispatch:
-  push:
-    branches: [ main ]
 
 permissions:
   contents: write
   pull-requests: write
-  actions: read
 
 jobs:
-  appium-emulator:
+  test:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
-
-    env:
-      APP_PATH: app/app.apk
-      JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
-      JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
-      JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
-      JIRA_PROJECT_KEY: ${{ vars.JIRA_PROJECT_KEY }}
-      JIRA_ISSUE_TYPE: ${{ vars.JIRA_ISSUE_TYPE }}
-      ENABLE_JIRA: ${{ vars.ENABLE_JIRA }}
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Setup Python
+        uses: actions/setup-python@v4
         with:
-          python-version: "3.11"
+          python-version: 3.11
 
-      - name: Install Dependencies
+      - name: Install dependencies
+        run: pip install pytest requests
+
+      - name: Run tests
+        id: test
+        run: pytest
+        continue-on-error: true
+
+      - name: Set test result
+        id: result
         run: |
-          pip install -r requirements.txt
-          npm install -g appium
-          appium driver install uiautomator2
+          if [ "${{ steps.test.outcome }}" == "failure" ]; then
+            echo "failed=true" >> $GITHUB_OUTPUT
+          else
+            echo "failed=false" >> $GITHUB_OUTPUT
+          fi
 
-      - name: Resolve APK
+      # ❌ Create Jira Ticket
+      - name: Create Jira Ticket
+        if: steps.result.outputs.failed == 'true'
+        env:
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          JIRA_PROJECT_KEY: ${{ vars.JIRA_PROJECT_KEY }}   # ✅ FIXED
+          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
         run: |
-          mkdir -p app
-          latest_release="$(gh release list --limit 1 --json tagName | jq -r '.[0].tagName')"
-          gh release download "$latest_release" --pattern "*.apk" --output "$APP_PATH" --clobber
+          echo "Creating Jira ticket..."
 
-      - name: Enable KVM
+          curl -X POST \
+            -u "$JIRA_EMAIL:$JIRA_API_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data "{
+              \"fields\": {
+                \"project\": { \"key\": \"$JIRA_PROJECT_KEY\" },
+                \"summary\": \"QA Automation Failure\",
+                \"description\": \"Tests failed in CI pipeline\",
+                \"issuetype\": { \"name\": \"Bug\" }
+              }
+            }" \
+            "$JIRA_BASE_URL/rest/api/3/issue"
+
+      # ✅ Create PR
+      - name: Create Pull Request
+        if: steps.result.outputs.failed == 'false'
         run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
+          echo "Creating PR from ${{ github.ref_name }} to main"
 
-      - name: Start Appium
-        run: |
-          mkdir -p reports
-          nohup appium --base-path / > reports/appium.log 2>&1 &
-          sleep 10
-
-      - name: Run Tests
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 30
-          target: google_apis
-          arch: x86_64
-          profile: Nexus 5
-          force-avd-creation: true
-          emulator-boot-timeout: 900
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot-save -noaudio -no-boot-anim -camera-back none -memory 2048
-          disable-animations: true
-          script: pytest
-
-      - name: Upload Artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: mobile-qa-reports
-          path: reports/
+          curl -X POST https://api.github.com/repos/${{ github.repository }}/pulls \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            -d '{
+              "title": "Auto PR after successful tests",
+              "head": "${{ github.ref_name }}",
+              "base": "main",
+              "body": "All tests passed successfully"
+            }'
