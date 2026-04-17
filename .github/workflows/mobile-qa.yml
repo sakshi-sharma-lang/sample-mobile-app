@@ -17,14 +17,12 @@ jobs:
 
     env:
       APP_PATH: app/app.apk
-      # Match your Secrets/Variables exactly
       JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
       JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
       JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
       JIRA_PROJECT_KEY: ${{ vars.JIRA_PROJECT_KEY }}
       JIRA_ISSUE_TYPE: ${{ vars.JIRA_ISSUE_TYPE }}
       ENABLE_JIRA: ${{ vars.ENABLE_JIRA }}
-      ENABLE_CREATE_PR: ${{ vars.ENABLE_CREATE_PR }}
       GH_TOKEN: ${{ secrets.TOKEN }}
 
     steps:
@@ -35,11 +33,9 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: pip
 
       - name: Install Dependencies
         run: |
-          python -m pip install --upgrade pip
           pip install -r requirements.txt
           npm install -g appium
           appium driver install uiautomator2
@@ -47,7 +43,7 @@ jobs:
       - name: Resolve APK from GitHub Release
         run: |
           mkdir -p app
-          latest_release="$(gh release list --limit 1 --exclude-drafts --json tagName | jq -r '.[0].tagName')"
+          latest_release="$(gh release list --limit 1 --json tagName | jq -r '.[0].tagName')"
           gh release download "$latest_release" --pattern "*.apk" --output "$APP_PATH" --clobber
 
       - name: Enable KVM
@@ -56,16 +52,11 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      - name: Create Reports Directory
-        run: mkdir -p reports
-
       - name: Start Appium server
         run: |
+          mkdir -p reports
           nohup appium --base-path / > reports/appium.log 2>&1 &
-          for i in {1..10}; do
-            if curl -s http://127.0.0.1:4723/status; then break; fi
-            sleep 2
-          done
+          sleep 10
 
       - name: Run Pytest on Emulator
         uses: reactivecircus/android-emulator-runner@v2
@@ -74,16 +65,7 @@ jobs:
           target: google_apis
           arch: x86_64
           profile: Nexus 5
-          force-avd-creation: true
-          emulator-boot-timeout: 800
-          emulator-options: >
-            -no-window 
-            -gpu swiftshader_indirect 
-            -no-snapshot-save 
-            -noaudio 
-            -no-boot-anim 
-            -camera-back none 
-            -memory 2048
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot-save -noaudio -no-boot-anim -camera-back none -memory 2048
           disable-animations: true
           script: pytest
 
@@ -92,6 +74,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: mobile-qa-reports-${{ github.run_number }}
-          path: |
-            reports/
-            appium.log
+          path: reports/
