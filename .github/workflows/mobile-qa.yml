@@ -2,8 +2,6 @@ name: QA Pipeline
 
 on:
   workflow_dispatch:
-  push:
-    branches: [ main ]
 
 permissions:
   contents: write
@@ -39,14 +37,15 @@ jobs:
             echo "failed=false" >> $GITHUB_OUTPUT
           fi
 
-      # ❌ Create Jira Ticket
+      # ❌ Create Jira Ticket if FAILED
       - name: Create Jira Ticket
         if: steps.result.outputs.failed == 'true'
         env:
           JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
-          JIRA_PROJECT_KEY: ${{ vars.JIRA_PROJECT_KEY }}   # ✅ FIXED
+          JIRA_PROJECT_KEY: ${{ vars.JIRA_PROJECT_KEY }}
           JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+          JIRA_ISSUE_TYPE: ${{ vars.JIRA_ISSUE_TYPE }}   # ✅ added
         run: |
           echo "Creating Jira ticket..."
 
@@ -58,12 +57,12 @@ jobs:
                 \"project\": { \"key\": \"$JIRA_PROJECT_KEY\" },
                 \"summary\": \"QA Automation Failure\",
                 \"description\": \"Tests failed in CI pipeline\",
-                \"issuetype\": { \"name\": \"Bug\" }
+                \"issuetype\": { \"name\": \"$JIRA_ISSUE_TYPE\" }
               }
             }" \
             "$JIRA_BASE_URL/rest/api/3/issue"
 
-      # ✅ Create PR
+      # ✅ Create PR if PASSED
       - name: Create Pull Request
         if: steps.result.outputs.failed == 'false'
         run: |
