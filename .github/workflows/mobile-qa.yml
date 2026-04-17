@@ -17,24 +17,12 @@ jobs:
     timeout-minutes: 45
 
     env:
-      # Core Paths - Fixed: Only one definition, correctly indented
       APP_PATH: app/app.apk
-      
-      # APK Download Config
-      APK_URL: ${{ vars.APK_URL || secrets.APK_URL || '' }}
-      APK_RELEASE_TAG: ${{ vars.APK_RELEASE_TAG || 'v1.0.0' }}
-      APK_ASSET_NAME: ${{ vars.APK_ASSET_NAME || 'Android_Appium_Demo.apk' }}
-      
-      # Test Config
-      PYTEST_MARKERS: ${{ vars.PYTEST_MARKERS || 'smoke' }}
-      ANDROID_API_LEVEL: ${{ vars.ANDROID_API_LEVEL || '30' }}
-      
       # Jira Configuration
       JIRA_URL: ${{ secrets.JIRA_URL }}
       JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
       JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
       JIRA_PROJECT_KEY: ${{ secrets.JIRA_PROJECT_KEY || 'QA' }}
-      
       # Feature Toggles
       ENABLE_JIRA: "true"
       ENABLE_CREATE_PR: "true"
@@ -62,20 +50,32 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p app
-          echo "Searching for APK in GitHub Releases..."
+          echo "Searching for APK in GitHub Releases (including pre-releases)..."
           
-          # Fetch release info using GitHub CLI
-          latest_release="$(gh release view --repo ${{ github.repository }} --json tagName,assets)"
-          TAG=$(echo "$latest_release" | python3 -c "import json,sys; data=json.load(sys.stdin); print(data['tagName'])")
-          ASSET=$(echo "$latest_release" | python3 -c "import json,sys; data=json.load(sys.stdin); assets=data['assets']; print(next((asset['name'] for asset in assets if asset['name'].lower().endswith('.apk')), ''))")
+          # Added the --exclude-drafts flag but removed requirement for stable
+          # This command fetches the most recent release regardless of 'Pre-release' status
+          latest_release="$(gh release list --limit 1 --exclude-drafts --json tagName | jq -r '.[0].tagName')"
           
-          if [ -z "$TAG" ] || [ -z "$ASSET" ]; then
-            echo "::error::No APK found in GitHub Releases. Ensure you have a release with an .apk file."
+          if [ "$latest_release" == "null" ] || [ -z "$latest_release" ]; then
+            echo "::error::No release found. Ensure you have at least one non-draft release."
+            exit 1
+          fi
+
+          echo "Found Release: $latest_release. Fetching assets..."
+          
+          # Fetch all assets for that tag
+          assets_json="$(gh release view "$latest_release" --json assets)"
+          
+          # Use Python to find the first asset ending in .apk
+          ASSET_NAME=$(echo "$assets_json" | python3 -c "import json,sys; data=json.load(sys.stdin); print(next((a['name'] for a in data['assets'] if a['name'].lower().endswith('.apk')), ''))")
+
+          if [ -z "$ASSET_NAME" ]; then
+            echo "::error::No .apk asset found in release $latest_release."
             exit 1
           fi
           
-          echo "Downloading $ASSET from release $TAG..."
-          gh release download "$TAG" --repo ${{ github.repository }} --pattern "$ASSET" --output "$APP_PATH" --clobber
+          echo "Downloading $ASSET_NAME from $latest_release..."
+          gh release download "$latest_release" --pattern "$ASSET_NAME" --output "$APP_PATH" --clobber
           
           if [ ! -s "$APP_PATH" ]; then
             echo "::error::Download failed or file is empty."
@@ -93,7 +93,6 @@ jobs:
           mkdir -p reports
           nohup appium --base-path / > reports/appium.log 2>&1 &
           
-          # Health check for Appium
           for i in {1..10}; do
             if curl -s http://127.0.0.1:4723/status; then
               echo "Appium is up!"
@@ -106,7 +105,7 @@ jobs:
       - name: Run Pytest on Emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: ${{ env.ANDROID_API_LEVEL }}
+          api-level: 30
           target: google_apis
           arch: x86_64
           profile: pixel_6
