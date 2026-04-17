@@ -2,24 +2,6 @@ name: Mobile APK QA
 
 on:
   workflow_dispatch:
-    inputs:
-      apk_url:
-        description: "HTTPS URL for the APK under test. Falls back to repository variable/secret APK_URL."
-        required: false
-        type: string
-      apk_release_tag:
-        description: "Optional GitHub Release tag to download the APK from, for example v1.0.0."
-        required: false
-        type: string
-      apk_asset_name:
-        description: "Optional APK asset name in the GitHub Release, for example app-release.apk."
-        required: false
-        type: string
-      pytest_markers:
-        description: "Pytest marker expression"
-        required: false
-        default: "smoke or login"
-        type: string
   push:
     paths:
       - "pages/**"
@@ -50,10 +32,10 @@ jobs:
 
     env:
       APP_PATH: app/app-under-test.apk
-      APK_URL: ${{ github.event.inputs.apk_url || vars.APK_URL || secrets.APK_URL || '' }}
-      APK_RELEASE_TAG: ${{ github.event.inputs.apk_release_tag || vars.APK_RELEASE_TAG || '' }}
-      APK_ASSET_NAME: ${{ github.event.inputs.apk_asset_name || vars.APK_ASSET_NAME || '' }}
-      PYTEST_MARKERS: ${{ github.event.inputs.pytest_markers || vars.PYTEST_MARKERS || 'smoke or login' }}
+      APK_URL: ${{ vars.APK_URL || secrets.APK_URL || '' }}
+      APK_RELEASE_TAG: ${{ vars.APK_RELEASE_TAG || 'v1.0.0' }}
+      APK_ASSET_NAME: ${{ vars.APK_ASSET_NAME || 'Android_Appium_Demo.apk' }}
+      PYTEST_MARKERS: ${{ vars.PYTEST_MARKERS || 'smoke' }}
       APPIUM_SERVER_URL: http://127.0.0.1:4723
       ANDROID_DEVICE_NAME: qa-emulator
       ENABLE_JIRA: ${{ vars.ENABLE_JIRA || 'false' }}
