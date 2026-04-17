@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       apk_url:
-        description: "Optional HTTPS URL for the APK under test. If empty, app/app-under-test.apk is used."
+        description: "HTTPS URL for the APK under test. Falls back to repository variable/secret APK_URL."
         required: false
         type: string
       pytest_markers:
@@ -42,6 +42,8 @@ jobs:
 
     env:
       APP_PATH: app/app-under-test.apk
+      APK_URL: ${{ github.event.inputs.apk_url || vars.APK_URL || secrets.APK_URL || '' }}
+      PYTEST_MARKERS: ${{ github.event.inputs.pytest_markers || vars.PYTEST_MARKERS || 'smoke or login' }}
       APPIUM_SERVER_URL: http://127.0.0.1:4723
       ANDROID_DEVICE_NAME: qa-emulator
       ENABLE_JIRA: ${{ vars.ENABLE_JIRA || 'false' }}
@@ -86,11 +88,16 @@ jobs:
       - name: Resolve APK
         run: |
           mkdir -p app
-          APK_URL="${{ github.event.inputs.apk_url || '' }}"
           if [ -n "$APK_URL" ]; then
+            echo "Downloading APK from configured URL."
             curl --fail --location --retry 3 --output "$APP_PATH" "$APK_URL"
+          elif [ -f "$APP_PATH" ]; then
+            echo "Using APK already present at $APP_PATH."
+          else
+            echo "::error::APK not found. Provide workflow input apk_url or set repository variable/secret APK_URL."
+            exit 1
           fi
-          test -f "$APP_PATH"
+          test -s "$APP_PATH"
 
       - name: Prepare Android SDK
         uses: android-actions/setup-android@v3
@@ -119,7 +126,7 @@ jobs:
 
       - name: Run pytest Appium suite
         id: pytest
-        run: pytest -m "${{ inputs.pytest_markers || 'smoke or login' }}" --reruns 1 --reruns-delay 5
+        run: pytest -m "$PYTEST_MARKERS" --reruns 1 --reruns-delay 5
 
       - name: Create GitHub PR when mobile QA passes
         if: >
