@@ -3,7 +3,10 @@ name: QA Pipeline
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches:
+      - main
+      - qa-test-branch
+      - feature/*
 
 permissions:
   contents: write
@@ -80,7 +83,7 @@ jobs:
 
       # ✅ Create PR if PASSED
       - name: Create Pull Request
-        if: steps.result.outputs.failed == 'false'
+        if: steps.result.outputs.failed == 'false' && github.ref_name != 'main'
         run: |
           echo "Creating PR from ${{ github.ref_name }} to main"
 
