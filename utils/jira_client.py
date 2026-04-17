@@ -1,12 +1,15 @@
 import requests
 import json
 import base64
+import os
 from pathlib import Path
 from utils.config import Config
+from utils.logger import get_logger
+
+log = get_logger(__name__)
 
 class JiraClient:
     def __init__(self):
-        # Maps to the env variables in the workflow
         self.url = Config.JIRA_BASE_URL
         self.email = Config.JIRA_EMAIL
         self.token = Config.JIRA_API_TOKEN
@@ -30,7 +33,7 @@ class JiraClient:
                     "version": 1,
                     "content": [{
                         "type": "paragraph",
-                        "content": [{"type": "text", "text": f"Error: {error_message}"}]
+                        "content": [{"type": "text", "text": f"Error: {error_message[:2000]}"}]
                     }]
                 },
                 "issuetype": {"name": self.issue_type}
@@ -46,11 +49,12 @@ class JiraClient:
         
         if response.status_code == 201:
             issue_key = response.json().get("key")
+            log.info(f"Jira issue created: {issue_key}")
             if screenshot_path and Path(screenshot_path).exists():
                 self.attach_screenshot(issue_key, screenshot_path, auth_header)
             return issue_key
         else:
-            print(f"Jira Error: {response.text}")
+            log.error(f"Jira API Error Detail: {response.text}")
 
     def attach_screenshot(self, issue_key, path, auth_header):
         url = f"{self.url.rstrip('/')}/rest/api/3/issue/{issue_key}/attachments"
