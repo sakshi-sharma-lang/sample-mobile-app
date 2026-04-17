@@ -108,8 +108,16 @@ jobs:
           elif [ -f "$APP_PATH" ]; then
             echo "Using APK already present at $APP_PATH."
           else
-            echo "::error::APK not found. Provide apk_url/APK_URL, or set APK_RELEASE_TAG and APK_ASSET_NAME."
-            exit 1
+            echo "No APK input provided. Looking for the first .apk asset in the latest GitHub Release."
+            latest_release="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName,assets)"
+            APK_RELEASE_TAG="$(echo "$latest_release" | python -c "import json,sys; print(json.load(sys.stdin)['tagName'])")"
+            APK_ASSET_NAME="$(echo "$latest_release" | python -c "import json,sys; assets=json.load(sys.stdin)['assets']; print(next((asset['name'] for asset in assets if asset['name'].lower().endswith('.apk')), ''))")"
+            if [ -z "$APK_RELEASE_TAG" ] || [ -z "$APK_ASSET_NAME" ]; then
+              echo "::error::APK not found. Provide apk_url/APK_URL, set APK_RELEASE_TAG and APK_ASSET_NAME, or upload an .apk asset to the latest GitHub Release."
+              exit 1
+            fi
+            echo "Downloading APK asset '$APK_ASSET_NAME' from latest release '$APK_RELEASE_TAG'."
+            gh release download "$APK_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern "$APK_ASSET_NAME" --output "$APP_PATH" --clobber
           fi
           test -s "$APP_PATH"
 
