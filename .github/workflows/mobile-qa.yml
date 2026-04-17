@@ -9,6 +9,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  actions: read
 
 jobs:
   appium-emulator:
@@ -16,16 +17,21 @@ jobs:
     timeout-minutes: 45
 
     env:
-      # Core Paths
       APP_PATH: app/app.apk
-      # Jira Configuration - Mapping Secrets to Env Vars
+      # Use these to target a specific release, or leave blank to auto-find the latest
+      APK_RELEASE_TAG: "" 
+      APK_ASSET_NAME: ""
+      
+      # Jira Configuration
       JIRA_URL: ${{ secrets.JIRA_URL }}
       JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
       JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
       JIRA_PROJECT_KEY: ${{ secrets.JIRA_PROJECT_KEY || 'QA' }}
+      
       # Feature Toggles
       ENABLE_JIRA: "true"
       ENABLE_CREATE_PR: "true"
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
       - name: Checkout repository
@@ -44,16 +50,28 @@ jobs:
           npm install -g appium
           appium driver install uiautomator2
 
-      - name: Resolve APK
+      - name: Resolve APK from GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p app
-          # Find any apk in the app folder and rename it to app.apk for the automation
-          APK_FILE=$(find app -name "*.apk" | head -n 1)
-          if [ -n "$APK_FILE" ]; then
-            echo "Found APK: $APK_FILE, moving to $APP_PATH"
-            cp "$APK_FILE" "$APP_PATH"
-          else
-            echo "::error::No APK found in the 'app/' directory. Ensure your APK is committed to the repo."
+          echo "Searching for APK in GitHub Releases..."
+          
+          # Logic to find the latest release tag and the first .apk asset
+          latest_release="$(gh release view --repo ${{ github.repository }} --json tagName,assets)"
+          TAG=$(echo "$latest_release" | python3 -c "import json,sys; print(json.load(sys.stdin)['tagName'])")
+          ASSET=$(echo "$latest_release" | python3 -c "import json,sys; assets=json.load(sys.stdin)['assets']; print(next((asset['name'] for asset in assets if asset['name'].lower().endswith('.apk')), ''))")
+          
+          if [ -z "$TAG" ] || [ -z "$ASSET" ]; then
+            echo "::error::No APK found in GitHub Releases. Ensure you have a release with an .apk file."
+            exit 1
+          fi
+          
+          echo "Downloading $ASSET from release $TAG..."
+          gh release download "$TAG" --repo ${{ github.repository }} --pattern "$ASSET" --output "$APP_PATH" --clobber
+          
+          if [ ! -s "$APP_PATH" ]; then
+            echo "::error::Download failed or file is empty."
             exit 1
           fi
 
@@ -81,7 +99,7 @@ jobs:
       - name: Create PR on Success
         if: success() && github.ref != 'refs/heads/main'
         env:
-          GH_TOKEN: ${{ secrets.TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh pr create --title "QA Passed: ${{ github.sha }}" --body "Mobile automation tests passed for this build." --base main --head ${{ github.ref_name }}
 
@@ -92,4 +110,4 @@ jobs:
           name: mobile-qa-reports
           path: |
             reports/
-            /tmp/emulator.log
+            allure-results/
