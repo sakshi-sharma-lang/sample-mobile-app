@@ -10,8 +10,7 @@
 
 
 def test_pass_1():
-    assert True
+    assert False
 
-def test_pass_2():
-    assert True
+
 
