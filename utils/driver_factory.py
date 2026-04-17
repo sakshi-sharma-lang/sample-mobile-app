@@ -1,28 +1,30 @@
 from appium import webdriver
 from appium.options.android import UiAutomator2Options
-from utils.config import settings
 import os
 
 class DriverFactory:
-    @staticmethod
-    def create_driver():
-        # Using the alias properties from our new Config class
-        options = UiAutomator2Options()
-        options.platform_name = settings.PLATFORM_NAME
-        options.device_name = settings.DEVICE_NAME
-        options.app = settings.APP_PATH
-        options.automation_name = settings.AUTOMATION_NAME
+    def __init__(self, settings_obj):
+        # Now accepts 'settings' from conftest.py
+        self.settings = settings_obj
+
+    def create_android_driver(self):
+        appium_cfg = self.settings.appium
         
-        # CI stability settings
-        options.set_capability("appium:newCommandTimeout", settings.appium.new_command_timeout)
+        options = UiAutomator2Options()
+        options.platform_name = appium_cfg.platform_name
+        options.device_name = appium_cfg.device_name
+        options.automation_name = appium_cfg.automation_name
+        options.app = str(appium_cfg.app_path)
+        
+        # Stability settings for CI
+        options.set_capability("appium:newCommandTimeout", appium_cfg.new_command_timeout)
         options.set_capability("appium:adbExecTimeout", 60000)
-        options.set_capability("autoGrantPermissions", settings.appium.auto_grant_permissions)
+        options.set_capability("autoGrantPermissions", appium_cfg.auto_grant_permissions)
 
         driver = webdriver.Remote(
-            command_executor=settings.APPIUM_SERVER,
+            command_executor=appium_cfg.server_url,
             options=options
         )
 
-        # Use the implicit wait from the config
         driver.implicitly_wait(20)
         return driver
