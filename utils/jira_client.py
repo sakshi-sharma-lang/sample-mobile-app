@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import mimetypes
+import json
 from pathlib import Path
 
 import requests
@@ -18,7 +19,11 @@ class JiraClient:
         self.settings = settings
         self.base_url = settings.base_url.rstrip("/")
         self.session = requests.Session()
-        auth_token = base64.b64encode(f"{settings.email}:{settings.api_token}".encode("utf-8")).decode("utf-8")
+        
+        # Auth: Email + API Token
+        auth_str = f"{settings.email}:{settings.api_token}"
+        auth_token = base64.b64encode(auth_str.encode("utf-8")).decode("utf-8")
+        
         self.session.headers.update(
             {
                 "Authorization": f"Basic {auth_token}",
@@ -56,32 +61,49 @@ class JiraClient:
 
         for artifact in (screenshot_path, logs_path):
             if artifact and artifact.exists():
-                self.attach_file(issue_key, artifact)
+                try:
+                    self.attach_file(issue_key, artifact)
+                except Exception as e:
+                    log.error("Failed to attach %s: %s", artifact.name, e)
 
-        log.info("Created Jira issue %s for failed test %s", issue_key, test_name)
+        log.info("Created Jira issue %s", issue_key)
         return issue_key
 
     def create_issue(self, summary: str, description: str) -> str:
-        fields: dict = {
-            "project": {"key": self.settings.project_key},
-            "summary": summary[:255],
-            "description": self._adf_description(description),
-            "issuetype": {"name": self.settings.issue_type},
+        # payload matches Jira Cloud v3 API
+        payload = {
+            "fields": {
+                "project": {"key": self.settings.project_key},
+                "summary": summary[:254],
+                "description": self._adf_description(description),
+                # Hardcoded to Task as per your project configuration
+                "issuetype": {"name": "Task"}, 
+            }
         }
+        
         if self.settings.component:
-            fields["components"] = [{"name": self.settings.component}]
+            payload["fields"]["components"] = [{"name": self.settings.component}]
 
-        response = self.session.post(f"{self.base_url}/rest/api/3/issue", json={"fields": fields}, timeout=30)
-        response.raise_for_status()
+        response = self.session.post(
+            f"{self.base_url}/rest/api/3/issue", 
+            data=json.dumps(payload), 
+            timeout=30
+        )
+        
+        if response.status_code != 201:
+            # THIS IS THE MOST IMPORTANT LOG FOR DEBUGGING 400 ERRORS
+            log.error("JIRA API REJECTION DETAIL: %s", response.text)
+            response.raise_for_status()
+            
         return str(response.json()["key"])
 
     def attach_file(self, issue_key: str, file_path: Path) -> None:
         headers = {
             "Authorization": self.session.headers["Authorization"],
-            "Accept": "application/json",
             "X-Atlassian-Token": "no-check",
         }
         content_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+        
         with file_path.open("rb") as handle:
             files = {"file": (file_path.name, handle, content_type)}
             response = requests.post(
@@ -93,25 +115,12 @@ class JiraClient:
         response.raise_for_status()
 
     @staticmethod
-    def _failure_description(
-        test_name: str,
-        error_message: str,
-        screenshot_path: Path | None,
-        logs_path: Path | None,
-    ) -> str:
-        lines = [
-            "Automated mobile QA detected a failed test.",
-            "",
-            f"Test: {test_name}",
-            "",
-            "Failure:",
-            error_message,
-            "",
-            "Artifacts:",
-            f"- Screenshot: {screenshot_path if screenshot_path else 'not captured'}",
-            f"- Logs: {logs_path if logs_path else 'not captured'}",
-        ]
-        return "\n".join(lines)
+    def _failure_description(test_name, error_message, screenshot_path, logs_path) -> str:
+        return (
+            f"Test: {test_name}\n\n"
+            f"Error Details:\n{error_message}\n\n"
+            f"Artifact Path: {screenshot_path if screenshot_path else 'N/A'}"
+        )
 
     @staticmethod
     def _adf_description(text: str) -> dict:
@@ -121,8 +130,7 @@ class JiraClient:
             "content": [
                 {
                     "type": "paragraph",
-                    "content": [{"type": "text", "text": line or " "}],
-                }
-                for line in text.splitlines()
-            ],
+                    "content": [{"type": "text", "text": line or " "}]
+                } for line in text.splitlines()
+            ]
         }
