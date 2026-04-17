@@ -50,7 +50,7 @@ jobs:
       JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
       JIRA_PROJECT_KEY: ${{ vars.JIRA_PROJECT_KEY || 'QA' }}
       JIRA_ISSUE_TYPE: ${{ vars.JIRA_ISSUE_TYPE || 'Bug' }}
-      JIRA_COMPONENT: ${{ vars.JIRA_COMPONENT || 'Mobile Automation' }}
+      JIRA_COMPONENT: ${{ vars.JIRA_COMPONENT }}
       JIRA_CREATE_DURING_PYTEST: "true"
       ENABLE_CREATE_PR: ${{ vars.ENABLE_CREATE_PR || 'false' }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
