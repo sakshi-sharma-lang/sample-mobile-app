@@ -1,136 +1,59 @@
-from __future__ import annotations
-
-import base64
-import mimetypes
-import json
-from pathlib import Path
-
 import requests
-
-from utils.config import JiraSettings
-from utils.logger import get_logger
-
-
-log = get_logger(__name__)
-
+import json
+import base64
+from pathlib import Path
+from utils.config import Config
 
 class JiraClient:
-    def __init__(self, settings: JiraSettings) -> None:
-        self.settings = settings
-        self.base_url = settings.base_url.rstrip("/")
-        self.session = requests.Session()
-        
-        # Auth: Email + API Token
-        auth_str = f"{settings.email}:{settings.api_token}"
-        auth_token = base64.b64encode(auth_str.encode("utf-8")).decode("utf-8")
-        
-        self.session.headers.update(
-            {
-                "Authorization": f"Basic {auth_token}",
-                "Accept": "application/json",
-                "Content-Type": "application/json",
-            }
-        )
-        self._validate()
+    def __init__(self):
+        # Maps to the env variables in the workflow
+        self.url = Config.JIRA_BASE_URL
+        self.email = Config.JIRA_EMAIL
+        self.token = Config.JIRA_API_TOKEN
+        self.project = Config.JIRA_PROJECT_KEY
+        self.issue_type = os.getenv("JIRA_ISSUE_TYPE", "Task")
 
-    def _validate(self) -> None:
-        missing = [
-            name
-            for name, value in {
-                "JIRA_BASE_URL": self.settings.base_url,
-                "JIRA_EMAIL": self.settings.email,
-                "JIRA_API_TOKEN": self.settings.api_token,
-                "JIRA_PROJECT_KEY": self.settings.project_key,
-            }.items()
-            if not value
-        ]
-        if missing:
-            raise ValueError(f"Missing Jira settings: {', '.join(missing)}")
+    def create_issue_for_test_failure(self, test_name, error_message, screenshot_path=None):
+        if os.getenv("ENABLE_JIRA", "false").lower() != "true":
+            return
 
-    def create_issue_for_test_failure(
-        self,
-        test_name: str,
-        error_message: str,
-        screenshot_path: Path | None = None,
-        logs_path: Path | None = None,
-    ) -> str:
-        issue_key = self.create_issue(
-            summary=f"Mobile automation failure: {test_name}",
-            description=self._failure_description(test_name, error_message, screenshot_path, logs_path),
-        )
+        api_url = f"{self.url.rstrip('/')}/rest/api/3/issue"
+        auth_str = f"{self.email}:{self.token}"
+        auth_header = base64.b64encode(auth_str.encode()).decode()
 
-        for artifact in (screenshot_path, logs_path):
-            if artifact and artifact.exists():
-                try:
-                    self.attach_file(issue_key, artifact)
-                except Exception as e:
-                    log.error("Failed to attach %s: %s", artifact.name, e)
-
-        log.info("Created Jira issue %s", issue_key)
-        return issue_key
-
-    def create_issue(self, summary: str, description: str) -> str:
-        # payload matches Jira Cloud v3 API
         payload = {
             "fields": {
-                "project": {"key": self.settings.project_key},
-                "summary": summary[:254],
-                "description": self._adf_description(description),
-                # Hardcoded to Task as per your project configuration
-                "issuetype": {"name": "Task"}, 
+                "project": {"key": self.project},
+                "summary": f"Mobile Failure: {test_name}",
+                "description": {
+                    "type": "doc",
+                    "version": 1,
+                    "content": [{
+                        "type": "paragraph",
+                        "content": [{"type": "text", "text": f"Error: {error_message}"}]
+                    }]
+                },
+                "issuetype": {"name": self.issue_type}
             }
         }
-        
-        if self.settings.component:
-            payload["fields"]["components"] = [{"name": self.settings.component}]
 
-        response = self.session.post(
-            f"{self.base_url}/rest/api/3/issue", 
-            data=json.dumps(payload), 
-            timeout=30
-        )
-        
-        if response.status_code != 201:
-            # THIS IS THE MOST IMPORTANT LOG FOR DEBUGGING 400 ERRORS
-            log.error("JIRA API REJECTION DETAIL: %s", response.text)
-            response.raise_for_status()
-            
-        return str(response.json()["key"])
-
-    def attach_file(self, issue_key: str, file_path: Path) -> None:
         headers = {
-            "Authorization": self.session.headers["Authorization"],
-            "X-Atlassian-Token": "no-check",
+            "Authorization": f"Basic {auth_header}",
+            "Content-Type": "application/json"
         }
-        content_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+
+        response = requests.post(api_url, data=json.dumps(payload), headers=headers)
         
-        with file_path.open("rb") as handle:
-            files = {"file": (file_path.name, handle, content_type)}
-            response = requests.post(
-                f"{self.base_url}/rest/api/3/issue/{issue_key}/attachments",
-                headers=headers,
-                files=files,
-                timeout=60,
-            )
-        response.raise_for_status()
+        if response.status_code == 201:
+            issue_key = response.json().get("key")
+            if screenshot_path and Path(screenshot_path).exists():
+                self.attach_screenshot(issue_key, screenshot_path, auth_header)
+            return issue_key
+        else:
+            print(f"Jira Error: {response.text}")
 
-    @staticmethod
-    def _failure_description(test_name, error_message, screenshot_path, logs_path) -> str:
-        return (
-            f"Test: {test_name}\n\n"
-            f"Error Details:\n{error_message}\n\n"
-            f"Artifact Path: {screenshot_path if screenshot_path else 'N/A'}"
-        )
-
-    @staticmethod
-    def _adf_description(text: str) -> dict:
-        return {
-            "type": "doc",
-            "version": 1,
-            "content": [
-                {
-                    "type": "paragraph",
-                    "content": [{"type": "text", "text": line or " "}]
-                } for line in text.splitlines()
-            ]
-        }
+    def attach_screenshot(self, issue_key, path, auth_header):
+        url = f"{self.url.rstrip('/')}/rest/api/3/issue/{issue_key}/attachments"
+        headers = {"Authorization": f"Basic {auth_header}", "X-Atlassian-Token": "no-check"}
+        with open(path, "rb") as f:
+            requests.post(url, headers=headers, files={"file": f})
