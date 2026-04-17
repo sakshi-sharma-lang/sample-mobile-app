@@ -3,58 +3,29 @@ name: Mobile APK QA
 on:
   workflow_dispatch:
   push:
-    paths:
-      - "pages/**"
-      - "tests/**"
-      - "utils/**"
-      - "config/**"
-      - "requirements.txt"
-      - ".github/workflows/mobile-qa.yml"
+    branches: [ main ]
   pull_request:
-    paths:
-      - "pages/**"
-      - "tests/**"
-      - "utils/**"
-      - "config/**"
-      - "requirements.txt"
-      - ".github/workflows/mobile-qa.yml"
 
 permissions:
   contents: write
   pull-requests: write
-  actions: read
 
 jobs:
   appium-emulator:
-    name: Appium on Android emulator
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
     env:
-      APP_PATH: app/app-under-test.apk
-      APK_URL: ${{ vars.APK_URL || secrets.APK_URL || '' }}
-      APK_RELEASE_TAG: ${{ vars.APK_RELEASE_TAG || 'v1.0.0' }}
-      APK_ASSET_NAME: ${{ vars.APK_ASSET_NAME || 'Android_Appium_Demo.apk' }}
-      PYTEST_MARKERS: ${{ vars.PYTEST_MARKERS || 'smoke' }}
-      ANDROID_API_LEVEL: ${{ vars.ANDROID_API_LEVEL || '30' }}
-      APPIUM_SERVER_URL: http://127.0.0.1:4723
-      ANDROID_DEVICE_NAME: qa-emulator
-      ENABLE_JIRA: ${{ vars.ENABLE_JIRA || 'false' }}
-      JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+      # Core Paths
+      APP_PATH: app/app.apk
+      # Jira Configuration - Mapping Secrets to Env Vars
+      JIRA_URL: ${{ secrets.JIRA_URL }}
       JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
       JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
-      JIRA_PROJECT_KEY: ${{ vars.JIRA_PROJECT_KEY || 'QA' }}
-      JIRA_ISSUE_TYPE: ${{ vars.JIRA_ISSUE_TYPE || 'Bug' }}
-      JIRA_COMPONENT: ${{ vars.JIRA_COMPONENT }}
-      JIRA_CREATE_DURING_PYTEST: "true"
-      ENABLE_CREATE_PR: ${{ vars.ENABLE_CREATE_PR || 'false' }}
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      GITHUB_REPOSITORY: ${{ github.repository }}
-      GITHUB_BASE_BRANCH: ${{ github.event.repository.default_branch }}
-      GITHUB_HEAD_BRANCH: ${{ github.ref_name != github.event.repository.default_branch && github.ref_name || format('qa/mobile-test-results-{0}', github.run_id) }}
-      GITHUB_PR_TITLE: ${{ github.ref_name != github.event.repository.default_branch && format('Mobile QA passed for {0}', github.ref_name) || format('Mobile QA passed for run {0}', github.run_number) }}
-      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      JIRA_PROJECT_KEY: ${{ secrets.JIRA_PROJECT_KEY || 'QA' }}
+      # Feature Toggles
+      ENABLE_JIRA: "true"
+      ENABLE_CREATE_PR: "true"
 
     steps:
       - name: Checkout repository
@@ -63,46 +34,15 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.11"
           cache: pip
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
-      - name: Install Python dependencies
-        run: python -m pip install --upgrade pip && pip install -r requirements.txt
-
-      - name: Install Appium and UiAutomator2 driver
+      - name: Install Dependencies
         run: |
-          npm install -g appium@latest
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          npm install -g appium
           appium driver install uiautomator2
-
-      - name: Resolve APK
-        run: |
-          mkdir -p app
-          if [ -n "$APK_URL" ]; then
-            echo "Downloading APK from configured URL."
-            curl --fail --location --retry 3 --output "$APP_PATH" "$APK_URL"
-          elif [ -n "$APK_RELEASE_TAG" ] && [ -n "$APK_ASSET_NAME" ]; then
-            echo "Downloading APK asset '$APK_ASSET_NAME' from release '$APK_RELEASE_TAG'."
-            gh release download "$APK_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern "$APK_ASSET_NAME" --output "$APP_PATH" --clobber
-          elif [ -f "$APP_PATH" ]; then
-            echo "Using APK already present at $APP_PATH."
-          else
-            echo "No APK input provided. Looking for the first .apk asset in the latest GitHub Release."
-            latest_release="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName,assets)"
-            APK_RELEASE_TAG="$(echo "$latest_release" | python -c "import json,sys; print(json.load(sys.stdin)['tagName'])")"
-            APK_ASSET_NAME="$(echo "$latest_release" | python -c "import json,sys; assets=json.load(sys.stdin)['assets']; print(next((asset['name'] for asset in assets if asset['name'].lower().endswith('.apk')), ''))")"
-            if [ -z "$APK_RELEASE_TAG" ] || [ -z "$APK_ASSET_NAME" ]; then
-              echo "::error::APK not found. Provide apk_url/APK_URL, set APK_RELEASE_TAG and APK_ASSET_NAME, or upload an .apk asset to the latest GitHub Release."
-              exit 1
-            fi
-            echo "Downloading APK asset '$APK_ASSET_NAME' from latest release '$APK_RELEASE_TAG'."
-            gh release download "$APK_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern "$APK_ASSET_NAME" --output "$APP_PATH" --clobber
-          fi
-          test -s "$APP_PATH"
 
       - name: Enable KVM
         run: |
@@ -113,44 +53,31 @@ jobs:
       - name: Start Appium server
         run: |
           mkdir -p reports
-          nohup appium --base-path / --log-timestamp --log-level info > reports/appium.log 2>&1 &
-          for attempt in {1..30}; do
-            if curl --fail "$APPIUM_SERVER_URL/status"; then
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "::error::Appium server did not become ready."
-          exit 1
+          nohup appium --base-path / > reports/appium.log 2>&1 &
+          sleep 5
 
-      - name: Run pytest Appium suite on emulator
-        id: pytest
+      - name: Run Pytest on Emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: ${{ env.ANDROID_API_LEVEL }}
+          api-level: 30
           target: google_apis
           arch: x86_64
           profile: pixel_6
-          emulator-boot-timeout: 600
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
-          disable-animations: true
-          script: pytest -m "$PYTEST_MARKERS" --reruns 1 --reruns-delay 5
+          script: pytest
 
-      - name: Create GitHub PR when mobile QA passes
-        if: >
-          success() &&
-          env.ENABLE_CREATE_PR == 'true' &&
-          github.event_name != 'pull_request' &&
-          (github.event_name != 'push' || github.ref_name != github.event.repository.default_branch)
-        run: python scripts/create_github_pr_on_success.py --body "Mobile APK QA passed on run ${{ github.run_number }}."
+      - name: Create PR on Success
+        # Only creates PR if tests pass AND we are NOT already on main
+        if: success() && github.ref != 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.TOKEN }}
+        run: |
+          gh pr create --title "QA Passed: ${{ github.sha }}" --body "Mobile automation tests passed for this build." --base main --head ${{ github.ref_name }}
 
-      - name: Upload test reports
+      - name: Upload Artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: mobile-qa-reports-${{ github.run_id }}
+          name: mobile-qa-reports
           path: |
             reports/
-            allure-results/
             /tmp/emulator.log
-          if-no-files-found: ignore
