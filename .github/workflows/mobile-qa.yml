@@ -7,6 +7,14 @@ on:
         description: "HTTPS URL for the APK under test. Falls back to repository variable/secret APK_URL."
         required: false
         type: string
+      apk_release_tag:
+        description: "Optional GitHub Release tag to download the APK from, for example v1.0.0."
+        required: false
+        type: string
+      apk_asset_name:
+        description: "Optional APK asset name in the GitHub Release, for example app-release.apk."
+        required: false
+        type: string
       pytest_markers:
         description: "Pytest marker expression"
         required: false
@@ -43,6 +51,8 @@ jobs:
     env:
       APP_PATH: app/app-under-test.apk
       APK_URL: ${{ github.event.inputs.apk_url || vars.APK_URL || secrets.APK_URL || '' }}
+      APK_RELEASE_TAG: ${{ github.event.inputs.apk_release_tag || vars.APK_RELEASE_TAG || '' }}
+      APK_ASSET_NAME: ${{ github.event.inputs.apk_asset_name || vars.APK_ASSET_NAME || '' }}
       PYTEST_MARKERS: ${{ github.event.inputs.pytest_markers || vars.PYTEST_MARKERS || 'smoke or login' }}
       APPIUM_SERVER_URL: http://127.0.0.1:4723
       ANDROID_DEVICE_NAME: qa-emulator
@@ -56,6 +66,7 @@ jobs:
       JIRA_CREATE_DURING_PYTEST: "true"
       ENABLE_CREATE_PR: ${{ vars.ENABLE_CREATE_PR || 'false' }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GITHUB_REPOSITORY: ${{ github.repository }}
       GITHUB_BASE_BRANCH: ${{ github.event.repository.default_branch }}
       GITHUB_HEAD_BRANCH: ${{ github.ref_name != github.event.repository.default_branch && github.ref_name || format('qa/mobile-test-results-{0}', github.run_id) }}
@@ -91,10 +102,13 @@ jobs:
           if [ -n "$APK_URL" ]; then
             echo "Downloading APK from configured URL."
             curl --fail --location --retry 3 --output "$APP_PATH" "$APK_URL"
+          elif [ -n "$APK_RELEASE_TAG" ] && [ -n "$APK_ASSET_NAME" ]; then
+            echo "Downloading APK asset '$APK_ASSET_NAME' from release '$APK_RELEASE_TAG'."
+            gh release download "$APK_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern "$APK_ASSET_NAME" --output "$APP_PATH" --clobber
           elif [ -f "$APP_PATH" ]; then
             echo "Using APK already present at $APP_PATH."
           else
-            echo "::error::APK not found. Provide workflow input apk_url or set repository variable/secret APK_URL."
+            echo "::error::APK not found. Provide apk_url/APK_URL, or set APK_RELEASE_TAG and APK_ASSET_NAME."
             exit 1
           fi
           test -s "$APP_PATH"
