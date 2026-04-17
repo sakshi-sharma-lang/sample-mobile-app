@@ -3,9 +3,10 @@ from pages.base_page import BasePage
 
 class LoginPage(BasePage):
 
-    username_locator = ("id", "com.example:id/username")
-    password_locator = ("id", "com.example:id/password")
-    login_button_locator = ("id", "com.example:id/login")
+    # ✅ FIXED LOCATORS (based on your app package)
+    username_locator = ("id", "com.skill2lead.appiumdemo:id/etEmail")
+    password_locator = ("id", "com.skill2lead.appiumdemo:id/etPassword")
+    login_button_locator = ("id", "com.skill2lead.appiumdemo:id/btnLogin")
 
     def wait_until_loaded(self):
         try:
