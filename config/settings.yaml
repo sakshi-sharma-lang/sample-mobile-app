@@ -1,28 +1,51 @@
+# config/settings.yaml
+# ====================
+# All settings here are checked-in defaults.
+# Override any value by:
+#   • setting an environment variable (CI / GitHub Actions secrets), OR
+#   • adding a .env file in the repo root (git-ignored).
+#
+# Environment variable mapping is documented in utils/config.py.
+
 appium:
-  server_url: "http://127.0.0.1:4723"
-  platform_name: "Android"
-  automation_name: "UiAutomator2"
-  device_name: "Android Emulator"
-  app_path: "app/app-under-test.apk"
-  no_reset: false
-  full_reset: false
-  auto_grant_permissions: true
-  new_command_timeout: 300
-  app_wait_duration_ms: 30000
+  server_url:              "http://127.0.0.1:4723"   # APPIUM_SERVER_URL
+  platform_name:           "Android"                  # PLATFORM_NAME
+  automation_name:         "UiAutomator2"             # AUTOMATION_NAME
+  device_name:             "Android Emulator"         # DEVICE_NAME
+  app_path:                "app/app.apk"              # APP_PATH
+  no_reset:                false                      # NO_RESET
+  full_reset:              false                      # FULL_RESET
+  auto_grant_permissions:  true                       # AUTO_GRANT_PERMISSIONS
+  new_command_timeout:     300                        # NEW_COMMAND_TIMEOUT
+  app_wait_duration_ms:    30000                      # APP_WAIT_DURATION_MS
 
 timeouts:
-  implicit_wait_seconds: 0
-  explicit_wait_seconds: 20
-  page_load_seconds: 45
+  implicit_wait_seconds:   0     # IMPLICIT_WAIT   (0 = rely on explicit waits)
+  explicit_wait_seconds:   20    # EXPLICIT_WAIT
+  page_load_seconds:       45    # PAGE_LOAD_TIMEOUT
 
+# Test credentials — override via TEST_DATA_USERNAME / TEST_DATA_PASSWORD env vars
+# NEVER commit real credentials here.
 test_data:
   username: "qa.user@example.com"
   password: "change-me"
 
+# Jira integration — all sensitive values MUST come from env vars / secrets.
+jira:
+  enabled:     false          # ENABLE_JIRA
+  base_url:    ""             # JIRA_BASE_URL   e.g. https://yourorg.atlassian.net
+  email:       ""             # JIRA_EMAIL
+  api_token:   ""             # JIRA_API_TOKEN
+  project_key: "SCRUM"        # JIRA_PROJECT_KEY
+  issue_type:  "Task"         # JIRA_ISSUE_TYPE
+
+# Locators are read by pages via settings.locator("page", "element").
+# Override a single locator without editing this file:
+#   LOCATOR_LOGIN_USERNAME="accessibility_id:email_field"
 locators:
   login:
-    username: "id:com.example.app:id/email"
-    password: "id:com.example.app:id/password"
-    submit: "id:com.example.app:id/login"
+    username:  "id:com.example.app:id/email"
+    password:  "id:com.example.app:id/password"
+    submit:    "id:com.example.app:id/login"
   home:
-    ready: "xpath://android.widget.TextView[contains(@text,'Home')]"
+    ready:     "xpath://android.widget.TextView[contains(@text,'Home')]"
