@@ -47,7 +47,7 @@ jobs:
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
           JIRA_PROJECT_KEY: ${{ vars.JIRA_PROJECT_KEY }}
           JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
-          JIRA_ISSUE_TYPE: ${{ vars.JIRA_ISSUE_TYPE }}   # ✅ added
+          JIRA_ISSUE_TYPE: ${{ vars.JIRA_ISSUE_TYPE }}
         run: |
           echo "Creating Jira ticket..."
 
@@ -58,7 +58,21 @@ jobs:
               \"fields\": {
                 \"project\": { \"key\": \"$JIRA_PROJECT_KEY\" },
                 \"summary\": \"QA Automation Failure\",
-                \"description\": \"Tests failed in CI pipeline\",
+                \"description\": {
+                  \"type\": \"doc\",
+                  \"version\": 1,
+                  \"content\": [
+                    {
+                      \"type\": \"paragraph\",
+                      \"content\": [
+                        {
+                          \"type\": \"text\",
+                          \"text\": \"Tests failed in CI pipeline\"
+                        }
+                      ]
+                    }
+                  ]
+                },
                 \"issuetype\": { \"name\": \"$JIRA_ISSUE_TYPE\" }
               }
             }" \
