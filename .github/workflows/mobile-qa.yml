@@ -1,0 +1,141 @@
+name: Mobile APK QA
+
+on:
+  workflow_dispatch:
+    inputs:
+      apk_url:
+        description: "Optional HTTPS URL for the APK under test. If empty, app/app-under-test.apk is used."
+        required: false
+        type: string
+      pytest_markers:
+        description: "Pytest marker expression"
+        required: false
+        default: "smoke or login"
+        type: string
+  push:
+    paths:
+      - "pages/**"
+      - "tests/**"
+      - "utils/**"
+      - "config/**"
+      - "requirements.txt"
+      - ".github/workflows/mobile-qa.yml"
+  pull_request:
+    paths:
+      - "pages/**"
+      - "tests/**"
+      - "utils/**"
+      - "config/**"
+      - "requirements.txt"
+      - ".github/workflows/mobile-qa.yml"
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: read
+
+jobs:
+  appium-emulator:
+    name: Appium on Android emulator
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    env:
+      APP_PATH: app/app-under-test.apk
+      APPIUM_SERVER_URL: http://127.0.0.1:4723
+      ANDROID_DEVICE_NAME: qa-emulator
+      ENABLE_JIRA: ${{ vars.ENABLE_JIRA || 'false' }}
+      JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+      JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+      JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+      JIRA_PROJECT_KEY: ${{ vars.JIRA_PROJECT_KEY || 'QA' }}
+      JIRA_ISSUE_TYPE: ${{ vars.JIRA_ISSUE_TYPE || 'Bug' }}
+      JIRA_COMPONENT: ${{ vars.JIRA_COMPONENT || 'Mobile Automation' }}
+      JIRA_CREATE_DURING_PYTEST: "true"
+      ENABLE_CREATE_PR: ${{ vars.ENABLE_CREATE_PR || 'false' }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITHUB_REPOSITORY: ${{ github.repository }}
+      GITHUB_BASE_BRANCH: ${{ github.event.repository.default_branch }}
+      GITHUB_HEAD_BRANCH: ${{ github.ref_name != github.event.repository.default_branch && github.ref_name || format('qa/mobile-test-results-{0}', github.run_id) }}
+      GITHUB_PR_TITLE: ${{ github.ref_name != github.event.repository.default_branch && format('Mobile QA passed for {0}', github.ref_name) || format('Mobile QA passed for run {0}', github.run_number) }}
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Python dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+
+      - name: Install Appium and UiAutomator2 driver
+        run: |
+          npm install -g appium@latest
+          appium driver install uiautomator2
+
+      - name: Resolve APK
+        run: |
+          mkdir -p app
+          APK_URL="${{ github.event.inputs.apk_url || '' }}"
+          if [ -n "$APK_URL" ]; then
+            curl --fail --location --retry 3 --output "$APP_PATH" "$APK_URL"
+          fi
+          test -f "$APP_PATH"
+
+      - name: Prepare Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Create emulator
+        run: |
+          sdkmanager "platform-tools" "platforms;android-35" "system-images;android-35;google_apis;x86_64"
+          echo "no" | avdmanager create avd --force --name "$ANDROID_DEVICE_NAME" --package "system-images;android-35;google_apis;x86_64" --device "pixel_6"
+
+      - name: Start emulator
+        run: |
+          nohup emulator -avd "$ANDROID_DEVICE_NAME" -no-window -no-audio -no-snapshot -gpu swiftshader_indirect >/tmp/emulator.log 2>&1 &
+          adb wait-for-device
+          boot_completed=""
+          until [ "$boot_completed" = "1" ]; do
+            boot_completed="$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')"
+            sleep 5
+          done
+          adb shell input keyevent 82
+
+      - name: Start Appium server
+        run: |
+          nohup appium --base-path / --log-timestamp --log-level info > reports/appium.log 2>&1 &
+          sleep 10
+          curl --fail "$APPIUM_SERVER_URL/status"
+
+      - name: Run pytest Appium suite
+        id: pytest
+        run: pytest -m "${{ inputs.pytest_markers || 'smoke or login' }}" --reruns 1 --reruns-delay 5
+
+      - name: Create GitHub PR when mobile QA passes
+        if: >
+          success() &&
+          env.ENABLE_CREATE_PR == 'true' &&
+          github.event_name != 'pull_request' &&
+          (github.event_name != 'push' || github.ref_name != github.event.repository.default_branch)
+        run: python scripts/create_github_pr_on_success.py --body "Mobile APK QA passed on run ${{ github.run_number }}."
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-qa-reports-${{ github.run_id }}
+          path: |
+            reports/
+            allure-results/
+            /tmp/emulator.log
+          if-no-files-found: ignore

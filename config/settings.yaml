@@ -1,0 +1,28 @@
+appium:
+  server_url: "http://127.0.0.1:4723"
+  platform_name: "Android"
+  automation_name: "UiAutomator2"
+  device_name: "Android Emulator"
+  app_path: "app/app-under-test.apk"
+  no_reset: false
+  full_reset: false
+  auto_grant_permissions: true
+  new_command_timeout: 300
+  app_wait_duration_ms: 30000
+
+timeouts:
+  implicit_wait_seconds: 0
+  explicit_wait_seconds: 20
+  page_load_seconds: 45
+
+test_data:
+  username: "qa.user@example.com"
+  password: "change-me"
+
+locators:
+  login:
+    username: "id:com.example.app:id/email"
+    password: "id:com.example.app:id/password"
+    submit: "id:com.example.app:id/login"
+  home:
+    ready: "xpath://android.widget.TextView[contains(@text,'Home')]"

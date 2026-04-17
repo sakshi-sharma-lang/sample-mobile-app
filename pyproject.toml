@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=75.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mobile-qa-automation"
+version = "0.1.0"
+description = "APK-only Android mobile QA automation framework using Python, pytest, and Appium."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "Appium-Python-Client==5.1.1",
+    "PyYAML==6.0.2",
+    "pytest==8.3.5",
+    "pytest-html==4.1.1",
+    "pytest-rerunfailures==15.1",
+    "requests==2.32.3",
+    "python-dotenv==1.0.1",
+    "allure-pytest==2.13.5",
+]
+
+[tool.setuptools]
+packages = ["pages", "tests", "utils"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--tb=short",
+    "--junitxml=reports/junit.xml",
+    "--html=reports/report.html",
+    "--self-contained-html",
+]
+markers = [
+    "smoke: critical launch and navigation checks",
+    "login: login flow checks",
+    "regression: broader APK regression checks",
+]
