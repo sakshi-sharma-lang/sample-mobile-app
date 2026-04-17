@@ -1,31 +1,28 @@
 from appium import webdriver
 from appium.options.android import UiAutomator2Options
-from utils.config import Config
+from utils.config import settings
 import os
 
-def create_driver():
-    options = UiAutomator2Options()
-    options.platform_name = Config.PLATFORM_NAME
-    options.device_name = Config.DEVICE_NAME
-    options.app = os.path.abspath(Config.APP_PATH)
-    options.automation_name = Config.AUTOMATION_NAME
-    
-    # Stability capabilities for CI environments
-    options.set_capability("appium:newCommandTimeout", 300)
-    options.set_capability("appium:adbExecTimeout", 60000)
-    options.set_capability("appium:uiautomator2ServerInstallTimeout", 60000)
-    options.set_capability("appium:uiautomator2ServerReadTimeout", 60000)
-    options.set_capability("autoGrantPermissions", True)
-    
-    # Prevent the session from quitting if a service briefly hangs
-    options.set_capability("appium:noReset", False)
+class DriverFactory:
+    @staticmethod
+    def create_driver():
+        # Using the alias properties from our new Config class
+        options = UiAutomator2Options()
+        options.platform_name = settings.PLATFORM_NAME
+        options.device_name = settings.DEVICE_NAME
+        options.app = settings.APP_PATH
+        options.automation_name = settings.AUTOMATION_NAME
+        
+        # CI stability settings
+        options.set_capability("appium:newCommandTimeout", settings.appium.new_command_timeout)
+        options.set_capability("appium:adbExecTimeout", 60000)
+        options.set_capability("autoGrantPermissions", settings.appium.auto_grant_permissions)
 
-    driver = webdriver.Remote(
-        command_executor=Config.APPIUM_SERVER,
-        options=options,
-        direct_connection=True
-    )
+        driver = webdriver.Remote(
+            command_executor=settings.APPIUM_SERVER,
+            options=options
+        )
 
-    # Increased wait for UI elements to appear on slow emulators
-    driver.implicitly_wait(20)
-    return driver
+        # Use the implicit wait from the config
+        driver.implicitly_wait(20)
+        return driver
