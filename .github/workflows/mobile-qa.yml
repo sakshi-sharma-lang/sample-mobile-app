@@ -114,7 +114,7 @@ jobs:
       - name: Create PR on Success
         if: success() && github.ref != 'refs/heads/main'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.TOKEN }}
         run: |
           gh pr create --title "QA Passed: ${{ github.sha }}" --body "Mobile automation tests passed for build ${{ github.run_number }}." --base main --head ${{ github.ref_name }}
 
