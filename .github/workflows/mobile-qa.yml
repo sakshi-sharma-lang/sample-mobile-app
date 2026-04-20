@@ -20,93 +20,90 @@ jobs:
 
     steps:
       # 📥 Checkout
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      # 🐍 Python
-      - uses: actions/setup-python@v4
+      # 🐍 Setup Python
+      - name: Setup Python
+        uses: actions/setup-python@v4
         with:
           python-version: 3.11
 
-      # 📦 Install deps
+      # 📦 Install dependencies
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
           npm install -g appium
-          appium driver install uiautomator2
 
-      # 🧠 Fix imports
-      - name: Set PYTHONPATH
-        run: echo "PYTHONPATH=$GITHUB_WORKSPACE" >> $GITHUB_ENV
-
-      # 📥 Download APK
+      # 📥 Download APK (ROBUST FIX)
       - name: Download APK
         run: |
+          echo "Fetching APK from latest release..."
+
           APK_URL=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases \
             | grep "browser_download_url.*apk" \
             | head -n 1 \
             | cut -d '"' -f 4)
 
+          echo "APK URL: $APK_URL"
+
           curl -L -o app.apk "$APK_URL"
 
-      # 🔍 Validate APK
+      # 🔍 Validate APK (CRITICAL)
       - name: Validate APK
         run: |
-          unzip -t app.apk > /dev/null 2>&1 || exit 1
+          echo "Validating APK..."
 
-      # 🔥 SAFE EMULATOR EXECUTION (KEY FIX)
-      - name: Run Mobile Tests
-        id: test
-        continue-on-error: true
-        run: |
-          echo "Starting emulator + tests..."
+          ls -lh
+          file app.apk
 
-          # run emulator inside subshell so failure doesn't kill job
-          ( 
-            reactivecircus_android_emulator_runner() {
-              npx --yes @reactivecircus/android-emulator-runner \
-                --api-level 30 \
-                --target google_apis \
-                --arch x86_64 \
-                --profile Nexus\ 6 \
-                --emulator-options "-no-window -gpu swiftshader_indirect -noaudio -no-boot-anim" \
-                --emulator-boot-timeout 600 \
-                --disable-animations false \
-                --script "
-                  adb wait-for-device
-                  sleep 20
-                  adb install app.apk || exit 1
-                  appium &
-                  sleep 15
-                  pytest
-                "
-            }
-
-            reactivecircus_android_emulator_runner
-          ) || echo "EMULATOR_FAILED=true" >> $GITHUB_ENV
-
-          # Capture pytest exit safely
-          if [ -f pytest_exit_code.txt ]; then
-            cat pytest_exit_code.txt
+          # Fail if HTML (wrong download)
+          if file app.apk | grep -q "HTML"; then
+            echo "Downloaded HTML instead of APK ❌"
+            exit 1
           fi
 
-      # 🎯 Evaluate ONLY pytest (ignore infra failure)
-      - name: Evaluate Test Result
-        id: result
+          # Validate ZIP structure (APK is zip)
+          unzip -t app.apk > /dev/null 2>&1 || (echo "Invalid APK file ❌" && exit 1)
+
+          echo "APK is valid ✅"
+
+      # 🤖 Run Emulator + Tests
+      - name: Run Mobile Tests
+        id: test
+        uses: reactivecircus/android-emulator-runner@v2
+        continue-on-error: true
+        with:
+          api-level: 30
+          arch: x86_64
+          profile: pixel
+          script: |
+            echo "Listing devices"
+            adb devices
+
+            echo "Installing APK"
+            adb install app.apk || exit 1   # infra failure → stop
+
+            echo "Starting Appium"
+            appium &
+            sleep 10
+
+            echo "Running pytest"
+            pytest
+
+      # 🎯 Detect ONLY pytest failure
+      - name: Check pytest result
+        id: pytest_check
         run: |
-          if [ -f pytest_exit_code.txt ]; then
-            code=$(cat pytest_exit_code.txt)
-            if [ "$code" -ne 0 ]; then
-              echo "pytest_failed=true" >> $GITHUB_OUTPUT
-            else
-              echo "pytest_failed=false" >> $GITHUB_OUTPUT
-            fi
+          if [ "${{ steps.test.outcome }}" == "failure" ]; then
+            echo "pytest_failed=true" >> $GITHUB_OUTPUT
           else
             echo "pytest_failed=false" >> $GITHUB_OUTPUT
           fi
 
-      # ❌ Jira ONLY if pytest failed
+      # ❌ Jira ONLY if pytest fails
       - name: Create Jira Ticket
-        if: steps.result.outputs.pytest_failed == 'true'
+        if: steps.pytest_check.outputs.pytest_failed == 'true'
         env:
           JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
@@ -126,24 +123,28 @@ jobs:
                 \"description\": {
                   \"type\": \"doc\",
                   \"version\": 1,
-                  \"content\": [{
-                    \"type\": \"paragraph\",
-                    \"content\": [{
-                      \"type\": \"text\",
-                      \"text\": \"Pytest test cases failed in CI pipeline\"
-                    }]
-                  }]
+                  \"content\": [
+                    {
+                      \"type\": \"paragraph\",
+                      \"content\": [
+                        {
+                          \"type\": \"text\",
+                          \"text\": \"Pytest test cases failed in CI pipeline\"
+                        }
+                      ]
+                    }
+                  ]
                 },
                 \"issuetype\": { \"name\": \"$JIRA_ISSUE_TYPE\" }
               }
             }" \
             "$JIRA_BASE_URL/rest/api/3/issue"
 
-      # ✅ PR ONLY if tests pass
+      # ✅ PR ONLY if pytest passes
       - name: Create Pull Request
-        if: steps.result.outputs.pytest_failed == 'false' && github.ref_name != 'main'
+        if: steps.pytest_check.outputs.pytest_failed == 'false' && github.ref_name != 'main'
         run: |
-          echo "Creating PR..."
+          echo "Creating PR from ${{ github.ref_name }} to main"
 
           curl -X POST https://api.github.com/repos/${{ github.repository }}/pulls \
             -H "Authorization: Bearer ${{ secrets.TOKEN }}" \
@@ -151,5 +152,6 @@ jobs:
             -d '{
               "title": "Auto PR after mobile tests passed",
               "head": "${{ github.ref_name }}",
-              "base": "main"
+              "base": "main",
+              "body": "All mobile tests passed successfully"
             }'

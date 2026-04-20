@@ -1,16 +1,14 @@
-# from utils.driver_factory import create_driver
+from utils.driver_factory import create_driver
 
 
-# def test_app_launch():
-#     driver = create_driver()
+def test_app_launch():
+    driver = create_driver()
 
-#     # Basic validation: app launched
-#     current_package = driver.current_package
-#     print("Current package:", current_package)
+    # Basic validation: app launched
+    current_package = driver.current_package
+    print("Current package:", current_package)
 
-#     assert current_package is not None
+    assert current_package is not None
 
-#     driver.quit()
+    driver.quit()
 
-def test_force_failure():
-    assert False, "Intentional failure to test Jira integration"
