@@ -62,13 +62,22 @@ jobs:
           api-level: 30
           arch: x86_64
           profile: pixel
+          emulator-options: -no-snapshot -noaudio -no-boot-anim
           script: |
+            echo "Waiting for device fully ready"
+            adb wait-for-device
+            sleep 20
+
             adb devices
+
+            echo "Installing APK"
             adb install app.apk || exit 1
 
+            echo "Starting Appium"
             appium &
-            sleep 10
+            sleep 15
 
+            echo "Running pytest"
             pytest
 
       - name: Check pytest result
