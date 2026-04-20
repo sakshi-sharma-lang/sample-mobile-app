@@ -6,3 +6,6 @@ pytest-rerunfailures==15.1
 requests==2.32.3
 python-dotenv==1.0.1
 allure-pytest==2.13.5
+pytest
+Appium-Python-Client
+selenium
