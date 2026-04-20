@@ -35,20 +35,40 @@ jobs:
           pip install -r requirements.txt
           npm install -g appium
 
-      # 📥 Download APK
+      # 📥 Download APK (ROBUST FIX)
       - name: Download APK
         run: |
-          echo "Downloading APK..."
-          curl -L -o app.apk \
-          https://github.com/${{ github.repository }}/releases/latest/download/app-release.apk
+          echo "Fetching APK from latest release..."
 
-      # 🔍 Verify APK (fail fast if wrong)
-      - name: Verify APK
+          APK_URL=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases \
+            | grep "browser_download_url.*apk" \
+            | head -n 1 \
+            | cut -d '"' -f 4)
+
+          echo "APK URL: $APK_URL"
+
+          curl -L -o app.apk "$APK_URL"
+
+      # 🔍 Validate APK (CRITICAL)
+      - name: Validate APK
         run: |
-          ls -lh
-          file app.apk | grep "Android package" || (echo "Invalid APK" && exit 1)
+          echo "Validating APK..."
 
-      # 🤖 Run Infra + Tests
+          ls -lh
+          file app.apk
+
+          # Fail if HTML (wrong download)
+          if file app.apk | grep -q "HTML"; then
+            echo "Downloaded HTML instead of APK ❌"
+            exit 1
+          fi
+
+          # Validate ZIP structure (APK is zip)
+          unzip -t app.apk > /dev/null 2>&1 || (echo "Invalid APK file ❌" && exit 1)
+
+          echo "APK is valid ✅"
+
+      # 🤖 Run Emulator + Tests
       - name: Run Mobile Tests
         id: test
         uses: reactivecircus/android-emulator-runner@v2
@@ -62,7 +82,7 @@ jobs:
             adb devices
 
             echo "Installing APK"
-            adb install app.apk || exit 1   # infra failure
+            adb install app.apk || exit 1   # infra failure → stop
 
             echo "Starting Appium"
             appium &
@@ -81,7 +101,7 @@ jobs:
             echo "pytest_failed=false" >> $GITHUB_OUTPUT
           fi
 
-      # ❌ Create Jira ONLY if tests fail
+      # ❌ Jira ONLY if pytest fails
       - name: Create Jira Ticket
         if: steps.pytest_check.outputs.pytest_failed == 'true'
         env:
@@ -120,7 +140,7 @@ jobs:
             }" \
             "$JIRA_BASE_URL/rest/api/3/issue"
 
-      # ✅ Create PR ONLY if tests pass
+      # ✅ PR ONLY if pytest passes
       - name: Create Pull Request
         if: steps.pytest_check.outputs.pytest_failed == 'false' && github.ref_name != 'main'
         run: |
