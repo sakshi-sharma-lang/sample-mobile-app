@@ -59,10 +59,13 @@ jobs:
         id: test
         uses: reactivecircus/android-emulator-runner@v2
         continue-on-error: true
+        timeout-minutes: 30          # ← ADD THIS - kills step if stuck
         with:
           api-level: 30
           arch: x86_64
           profile: pixel
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot-save -noaudio -no-boot-anim   # ← ADD THIS
+          disable-animations: true
           script: |
             echo "Listing devices"
             adb devices
