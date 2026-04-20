@@ -35,20 +35,20 @@ jobs:
           pip install -r requirements.txt
           npm install -g appium
 
-      # 📥 Download APK (FIXED ✅)
+      # 📥 Download APK
       - name: Download APK
         run: |
           echo "Downloading APK..."
           curl -L -o app.apk \
           https://github.com/${{ github.repository }}/releases/latest/download/app-release.apk
 
-      # 🔍 Verify APK (VERY IMPORTANT)
+      # 🔍 Verify APK (fail fast if wrong)
       - name: Verify APK
         run: |
           ls -lh
-          file app.apk
+          file app.apk | grep "Android package" || (echo "Invalid APK" && exit 1)
 
-      # 🤖 Run Mobile Tests
+      # 🤖 Run Infra + Tests
       - name: Run Mobile Tests
         id: test
         uses: reactivecircus/android-emulator-runner@v2
@@ -62,7 +62,7 @@ jobs:
             adb devices
 
             echo "Installing APK"
-            adb install app.apk
+            adb install app.apk || exit 1   # infra failure
 
             echo "Starting Appium"
             appium &
@@ -71,9 +71,19 @@ jobs:
             echo "Running pytest"
             pytest
 
-      # ❌ Create Jira Ticket if FAILED
+      # 🎯 Detect ONLY pytest failure
+      - name: Check pytest result
+        id: pytest_check
+        run: |
+          if [ "${{ steps.test.outcome }}" == "failure" ]; then
+            echo "pytest_failed=true" >> $GITHUB_OUTPUT
+          else
+            echo "pytest_failed=false" >> $GITHUB_OUTPUT
+          fi
+
+      # ❌ Create Jira ONLY if tests fail
       - name: Create Jira Ticket
-        if: steps.test.outcome == 'failure'
+        if: steps.pytest_check.outputs.pytest_failed == 'true'
         env:
           JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
@@ -99,7 +109,7 @@ jobs:
                       \"content\": [
                         {
                           \"type\": \"text\",
-                          \"text\": \"Mobile tests failed in CI pipeline\"
+                          \"text\": \"Pytest test cases failed in CI pipeline\"
                         }
                       ]
                     }
@@ -110,9 +120,9 @@ jobs:
             }" \
             "$JIRA_BASE_URL/rest/api/3/issue"
 
-      # ✅ Create PR if PASSED
+      # ✅ Create PR ONLY if tests pass
       - name: Create Pull Request
-        if: steps.test.outcome == 'success' && github.ref_name != 'main'
+        if: steps.pytest_check.outputs.pytest_failed == 'false' && github.ref_name != 'main'
         run: |
           echo "Creating PR from ${{ github.ref_name }} to main"
 
