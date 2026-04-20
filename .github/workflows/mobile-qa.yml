@@ -19,38 +19,46 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 📥 Checkout
       - name: Checkout
         uses: actions/checkout@v4
 
+      # 🐍 Python
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: 3.11
 
+      # 📦 Install deps
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
           npm install -g appium
           appium driver install uiautomator2
 
+      # 🧠 Fix Python imports
       - name: Set PYTHONPATH
         run: echo "PYTHONPATH=$GITHUB_WORKSPACE" >> $GITHUB_ENV
 
+      # 📥 Download APK
       - name: Download APK
         run: |
+          echo "Fetching APK..."
           APK_URL=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases \
             | grep "browser_download_url.*apk" \
             | head -n 1 \
             | cut -d '"' -f 4)
 
+          echo "APK URL: $APK_URL"
           curl -L -o app.apk "$APK_URL"
 
+      # 🔍 Validate APK (fail fast if bad)
       - name: Validate APK
         run: |
           file app.apk
-          unzip -t app.apk > /dev/null 2>&1 || exit 1
+          unzip -t app.apk > /dev/null 2>&1 || (echo "Invalid APK ❌" && exit 1)
 
-      # 🔥 FIXED EMULATOR CONFIG (NO SETTINGS CALLS)
+      # 🤖 Run Emulator + Tests
       - name: Run Mobile Tests
         id: test
         uses: reactivecircus/android-emulator-runner@v2
@@ -62,10 +70,10 @@ jobs:
           profile: Nexus 6
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
           emulator-boot-timeout: 600
-          disable-animations: false   # 🔥 IMPORTANT FIX
+          disable-animations: false
           script: |
-            echo "Waiting for device..."
-            adb wait-for-device
+            echo "Waiting for emulator..."
+            adb wait-for-device || exit 1
             sleep 20
 
             echo "Devices:"
@@ -80,18 +88,26 @@ jobs:
 
             echo "Running pytest"
             pytest
+            echo $? > pytest_exit_code.txt
 
-      - name: Check pytest result
-        id: pytest_check
+      # 🎯 Detect ONLY pytest result
+      - name: Evaluate Test Result
+        id: result
         run: |
-          if [ "${{ steps.test.outcome }}" == "failure" ]; then
-            echo "pytest_failed=true" >> $GITHUB_OUTPUT
+          if [ -f pytest_exit_code.txt ]; then
+            code=$(cat pytest_exit_code.txt)
+            if [ "$code" -ne 0 ]; then
+              echo "pytest_failed=true" >> $GITHUB_OUTPUT
+            else
+              echo "pytest_failed=false" >> $GITHUB_OUTPUT
+            fi
           else
             echo "pytest_failed=false" >> $GITHUB_OUTPUT
           fi
 
+      # ❌ Jira ONLY for pytest failure
       - name: Create Jira Ticket
-        if: steps.pytest_check.outputs.pytest_failed == 'true'
+        if: steps.result.outputs.pytest_failed == 'true'
         env:
           JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
@@ -99,6 +115,8 @@ jobs:
           JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
           JIRA_ISSUE_TYPE: ${{ vars.JIRA_ISSUE_TYPE }}
         run: |
+          echo "Creating Jira ticket for test failure..."
+
           curl -X POST \
             -u "$JIRA_EMAIL:$JIRA_API_TOKEN" \
             -H "Content-Type: application/json" \
@@ -122,13 +140,18 @@ jobs:
             }" \
             "$JIRA_BASE_URL/rest/api/3/issue"
 
+      # ✅ PR ONLY if tests pass
       - name: Create Pull Request
-        if: steps.pytest_check.outputs.pytest_failed == 'false' && github.ref_name != 'main'
+        if: steps.result.outputs.pytest_failed == 'false' && github.ref_name != 'main'
         run: |
+          echo "Creating PR..."
+
           curl -X POST https://api.github.com/repos/${{ github.repository }}/pulls \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
             -d '{
               "title": "Auto PR after mobile tests passed",
               "head": "${{ github.ref_name }}",
-              "base": "main"
+              "base": "main",
+              "body": "All mobile tests passed successfully"
             }'
