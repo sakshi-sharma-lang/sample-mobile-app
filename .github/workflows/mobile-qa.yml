@@ -36,7 +36,6 @@ jobs:
       - name: Set PYTHONPATH
         run: echo "PYTHONPATH=$GITHUB_WORKSPACE" >> $GITHUB_ENV
 
-      # ✅ APK download (same as before)
       - name: Download APK
         run: |
           APK_URL=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases \
@@ -51,24 +50,25 @@ jobs:
           file app.apk
           unzip -t app.apk > /dev/null 2>&1 || exit 1
 
-      # 🔥 FIXED EMULATOR SETUP
+      # 🔥 FIXED EMULATOR CONFIG (NO SETTINGS CALLS)
       - name: Run Mobile Tests
         id: test
         uses: reactivecircus/android-emulator-runner@v2
         continue-on-error: true
         with:
           api-level: 30
-          target: google_apis   # 🔥 IMPORTANT
+          target: google_apis
           arch: x86_64
           profile: Nexus 6
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
-          disable-animations: true
-          emulator-boot-timeout: 600   # 🔥 IMPORTANT (10 mins)
+          emulator-boot-timeout: 600
+          disable-animations: false   # 🔥 IMPORTANT FIX
           script: |
-            echo "Waiting for emulator..."
+            echo "Waiting for device..."
             adb wait-for-device
+            sleep 20
 
-            echo "Checking devices"
+            echo "Devices:"
             adb devices
 
             echo "Installing APK"
