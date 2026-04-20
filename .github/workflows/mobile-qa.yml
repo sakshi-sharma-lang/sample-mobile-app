@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      #  Checkout
+      # 📥 Checkout
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -29,20 +29,26 @@ jobs:
         with:
           python-version: 3.11
 
-      #  Install deps
+      # 📦 Install dependencies
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
           npm install -g appium
 
-      #  Download APK
+      # 📥 Download APK (FIXED ✅)
       - name: Download APK
         run: |
           echo "Downloading APK..."
           curl -L -o app.apk \
-          https://github.com/${{ github.repository }}/releases/latest/download/app.apk
+          https://github.com/${{ github.repository }}/releases/latest/download/app-release.apk
 
-      #  Run Mobile Tests
+      # 🔍 Verify APK (VERY IMPORTANT)
+      - name: Verify APK
+        run: |
+          ls -lh
+          file app.apk
+
+      # 🤖 Run Mobile Tests
       - name: Run Mobile Tests
         id: test
         uses: reactivecircus/android-emulator-runner@v2
@@ -65,7 +71,7 @@ jobs:
             echo "Running pytest"
             pytest
 
-      #  Jira (if test failed)
+      # ❌ Create Jira Ticket if FAILED
       - name: Create Jira Ticket
         if: steps.test.outcome == 'failure'
         env:
@@ -104,7 +110,7 @@ jobs:
             }" \
             "$JIRA_BASE_URL/rest/api/3/issue"
 
-      #  PR (if test passed)
+      # ✅ Create PR if PASSED
       - name: Create Pull Request
         if: steps.test.outcome == 'success' && github.ref_name != 'main'
         run: |
