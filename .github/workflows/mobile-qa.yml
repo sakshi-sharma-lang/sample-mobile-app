@@ -66,21 +66,7 @@ jobs:
           profile: pixel
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot-save -noaudio -no-boot-anim
           disable-animations: true
-          script: |
-            adb devices
-            adb install app.apk || exit 1
-
-            appium --base-path / &
-            sleep 10
-
-            pytest
-            PYTEST_EXIT=$?
-
-            # Kill emulator manually so the action doesn't hang on cleanup
-            adb emu kill
-            sleep 5
-
-            exit $PYTEST_EXIT
+          script: bash -c 'adb devices && adb install app.apk && appium --base-path / & sleep 10 && pytest; PYTEST_EXIT=$?; adb emu kill || true; pkill -9 -f emulator || true; pkill -9 -f qemu-system || true; sleep 3; exit $PYTEST_EXIT'
 
       - name: Check pytest result
         id: pytest_check
