@@ -59,26 +59,28 @@ jobs:
         id: test
         uses: reactivecircus/android-emulator-runner@v2
         continue-on-error: true
-        timeout-minutes: 30          # ← ADD THIS - kills step if stuck
+        timeout-minutes: 30
         with:
           api-level: 30
           arch: x86_64
           profile: pixel
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot-save -noaudio -no-boot-anim   # ← ADD THIS
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot-save -noaudio -no-boot-anim
           disable-animations: true
           script: |
-            echo "Listing devices"
             adb devices
-
-            echo "Installing APK"
             adb install app.apk || exit 1
 
-            echo "Starting Appium"
             appium --base-path / &
             sleep 10
 
-            echo "Running pytest"
             pytest
+            PYTEST_EXIT=$?
+
+            # Kill emulator manually so the action doesn't hang on cleanup
+            adb emu kill
+            sleep 5
+
+            exit $PYTEST_EXIT
 
       - name: Check pytest result
         id: pytest_check
