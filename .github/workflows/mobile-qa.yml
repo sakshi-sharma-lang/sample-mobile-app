@@ -19,56 +19,41 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 📥 Checkout
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 🐍 Setup Python
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: 3.11
 
-      # 📦 Install dependencies
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
           npm install -g appium
 
-      # 📥 Download APK (ROBUST FIX)
+      # ✅ FIX: install Appium driver
+      - name: Install Appium Android Driver
+        run: |
+          appium driver install uiautomator2
+
+      - name: Set PYTHONPATH
+        run: echo "PYTHONPATH=$GITHUB_WORKSPACE" >> $GITHUB_ENV
+
       - name: Download APK
         run: |
-          echo "Fetching APK from latest release..."
-
           APK_URL=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases \
             | grep "browser_download_url.*apk" \
             | head -n 1 \
             | cut -d '"' -f 4)
 
-          echo "APK URL: $APK_URL"
-
           curl -L -o app.apk "$APK_URL"
 
-      # 🔍 Validate APK (CRITICAL)
       - name: Validate APK
         run: |
-          echo "Validating APK..."
-
-          ls -lh
           file app.apk
+          unzip -t app.apk > /dev/null 2>&1 || exit 1
 
-          # Fail if HTML (wrong download)
-          if file app.apk | grep -q "HTML"; then
-            echo "Downloaded HTML instead of APK ❌"
-            exit 1
-          fi
-
-          # Validate ZIP structure (APK is zip)
-          unzip -t app.apk > /dev/null 2>&1 || (echo "Invalid APK file ❌" && exit 1)
-
-          echo "APK is valid ✅"
-
-      # 🤖 Run Emulator + Tests
       - name: Run Mobile Tests
         id: test
         uses: reactivecircus/android-emulator-runner@v2
@@ -78,20 +63,14 @@ jobs:
           arch: x86_64
           profile: pixel
           script: |
-            echo "Listing devices"
             adb devices
+            adb install app.apk || exit 1
 
-            echo "Installing APK"
-            adb install app.apk || exit 1   # infra failure → stop
-
-            echo "Starting Appium"
             appium &
             sleep 10
 
-            echo "Running pytest"
             pytest
 
-      # 🎯 Detect ONLY pytest failure
       - name: Check pytest result
         id: pytest_check
         run: |
@@ -101,7 +80,6 @@ jobs:
             echo "pytest_failed=false" >> $GITHUB_OUTPUT
           fi
 
-      # ❌ Jira ONLY if pytest fails
       - name: Create Jira Ticket
         if: steps.pytest_check.outputs.pytest_failed == 'true'
         env:
@@ -111,8 +89,6 @@ jobs:
           JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
           JIRA_ISSUE_TYPE: ${{ vars.JIRA_ISSUE_TYPE }}
         run: |
-          echo "Creating Jira ticket..."
-
           curl -X POST \
             -u "$JIRA_EMAIL:$JIRA_API_TOKEN" \
             -H "Content-Type: application/json" \
@@ -123,35 +99,26 @@ jobs:
                 \"description\": {
                   \"type\": \"doc\",
                   \"version\": 1,
-                  \"content\": [
-                    {
-                      \"type\": \"paragraph\",
-                      \"content\": [
-                        {
-                          \"type\": \"text\",
-                          \"text\": \"Pytest test cases failed in CI pipeline\"
-                        }
-                      ]
-                    }
-                  ]
+                  \"content\": [{
+                    \"type\": \"paragraph\",
+                    \"content\": [{
+                      \"type\": \"text\",
+                      \"text\": \"Pytest test cases failed in CI pipeline\"
+                    }]
+                  }]
                 },
                 \"issuetype\": { \"name\": \"$JIRA_ISSUE_TYPE\" }
               }
             }" \
             "$JIRA_BASE_URL/rest/api/3/issue"
 
-      # ✅ PR ONLY if pytest passes
       - name: Create Pull Request
         if: steps.pytest_check.outputs.pytest_failed == 'false' && github.ref_name != 'main'
         run: |
-          echo "Creating PR from ${{ github.ref_name }} to main"
-
           curl -X POST https://api.github.com/repos/${{ github.repository }}/pulls \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            -H "Accept: application/vnd.github+json" \
             -d '{
               "title": "Auto PR after mobile tests passed",
               "head": "${{ github.ref_name }}",
-              "base": "main",
-              "body": "All mobile tests passed successfully"
+              "base": "main"
             }'
