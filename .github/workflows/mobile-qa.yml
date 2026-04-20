@@ -19,56 +19,42 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 📥 Checkout
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 🐍 Setup Python
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
-          python-version: 3.11
+          python-version: "3.11"
 
-      # 📦 Install dependencies
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
           npm install -g appium
+          appium driver install uiautomator2
 
-      # 📥 Download APK (ROBUST FIX)
       - name: Download APK
         run: |
           echo "Fetching APK from latest release..."
-
           APK_URL=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases \
             | grep "browser_download_url.*apk" \
             | head -n 1 \
             | cut -d '"' -f 4)
-
           echo "APK URL: $APK_URL"
-
           curl -L -o app.apk "$APK_URL"
 
-      # 🔍 Validate APK (CRITICAL)
       - name: Validate APK
         run: |
           echo "Validating APK..."
-
           ls -lh
           file app.apk
-
-          # Fail if HTML (wrong download)
           if file app.apk | grep -q "HTML"; then
             echo "Downloaded HTML instead of APK ❌"
             exit 1
           fi
-
-          # Validate ZIP structure (APK is zip)
           unzip -t app.apk > /dev/null 2>&1 || (echo "Invalid APK file ❌" && exit 1)
-
           echo "APK is valid ✅"
 
-      # 🤖 Run Emulator + Tests
       - name: Run Mobile Tests
         id: test
         uses: reactivecircus/android-emulator-runner@v2
@@ -82,16 +68,15 @@ jobs:
             adb devices
 
             echo "Installing APK"
-            adb install app.apk || exit 1   # infra failure → stop
+            adb install app.apk || exit 1
 
             echo "Starting Appium"
-            appium &
+            appium --base-path / &
             sleep 10
 
             echo "Running pytest"
             pytest
 
-      # 🎯 Detect ONLY pytest failure
       - name: Check pytest result
         id: pytest_check
         run: |
@@ -101,7 +86,6 @@ jobs:
             echo "pytest_failed=false" >> $GITHUB_OUTPUT
           fi
 
-      # ❌ Jira ONLY if pytest fails
       - name: Create Jira Ticket
         if: steps.pytest_check.outputs.pytest_failed == 'true'
         env:
@@ -112,14 +96,13 @@ jobs:
           JIRA_ISSUE_TYPE: ${{ vars.JIRA_ISSUE_TYPE }}
         run: |
           echo "Creating Jira ticket..."
-
           curl -X POST \
             -u "$JIRA_EMAIL:$JIRA_API_TOKEN" \
             -H "Content-Type: application/json" \
             --data "{
               \"fields\": {
                 \"project\": { \"key\": \"$JIRA_PROJECT_KEY\" },
-                \"summary\": \"Mobile Test Failure\",
+                \"summary\": \"Mobile Test Failure — ${{ github.ref_name }}\",
                 \"description\": {
                   \"type\": \"doc\",
                   \"version\": 1,
@@ -129,7 +112,7 @@ jobs:
                       \"content\": [
                         {
                           \"type\": \"text\",
-                          \"text\": \"Pytest test cases failed in CI pipeline\"
+                          \"text\": \"Pytest failed on branch ${{ github.ref_name }} (run ${{ github.run_id }})\"
                         }
                       ]
                     }
@@ -140,18 +123,23 @@ jobs:
             }" \
             "$JIRA_BASE_URL/rest/api/3/issue"
 
-      # ✅ PR ONLY if pytest passes
       - name: Create Pull Request
         if: steps.pytest_check.outputs.pytest_failed == 'false' && github.ref_name != 'main'
         run: |
           echo "Creating PR from ${{ github.ref_name }} to main"
-
           curl -X POST https://api.github.com/repos/${{ github.repository }}/pulls \
             -H "Authorization: Bearer ${{ secrets.TOKEN }}" \
             -H "Accept: application/vnd.github+json" \
             -d '{
-              "title": "Auto PR after mobile tests passed",
+              "title": "Auto PR after mobile tests passed ✅",
               "head": "${{ github.ref_name }}",
               "base": "main",
-              "body": "All mobile tests passed successfully"
+              "body": "All mobile tests passed on run ${{ github.run_id }}"
             }'
+
+      - name: Upload Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-qa-reports
+          path: reports/
