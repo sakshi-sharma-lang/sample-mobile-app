@@ -31,15 +31,12 @@ jobs:
         run: |
           pip install -r requirements.txt
           npm install -g appium
-
-      # ✅ FIX: install Appium driver
-      - name: Install Appium Android Driver
-        run: |
           appium driver install uiautomator2
 
       - name: Set PYTHONPATH
         run: echo "PYTHONPATH=$GITHUB_WORKSPACE" >> $GITHUB_ENV
 
+      # ✅ APK download (same as before)
       - name: Download APK
         run: |
           APK_URL=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases \
@@ -54,20 +51,24 @@ jobs:
           file app.apk
           unzip -t app.apk > /dev/null 2>&1 || exit 1
 
+      # 🔥 FIXED EMULATOR SETUP
       - name: Run Mobile Tests
         id: test
         uses: reactivecircus/android-emulator-runner@v2
         continue-on-error: true
         with:
           api-level: 30
+          target: google_apis   # 🔥 IMPORTANT
           arch: x86_64
-          profile: pixel
-          emulator-options: -no-snapshot -noaudio -no-boot-anim
+          profile: Nexus 6
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+          disable-animations: true
+          emulator-boot-timeout: 600   # 🔥 IMPORTANT (10 mins)
           script: |
-            echo "Waiting for device fully ready"
+            echo "Waiting for emulator..."
             adb wait-for-device
-            sleep 20
 
+            echo "Checking devices"
             adb devices
 
             echo "Installing APK"
