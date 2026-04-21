@@ -1,4 +1,4 @@
-name: QA Pipeline (Simple)
+name: QA Pipeline (Correct Jira Logic)
 
 on:
   workflow_dispatch:
@@ -16,38 +16,40 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 📥 Checkout
       - uses: actions/checkout@v4
 
-      # 🐍 Python
       - uses: actions/setup-python@v4
         with:
           python-version: 3.11
 
-      # 📦 Install deps
+      # ✅ install required plugins
       - name: Install dependencies
-        run: pip install pytest
+        run: |
+          pip install pytest pytest-html pytest-rerunfailures requests
 
-      # 🧪 Run tests
+      # 🔥 Run pytest and capture exit code
       - name: Run pytest
         id: test
+        continue-on-error: true
         run: |
           pytest
-        continue-on-error: true
+          echo "PYTEST_EXIT_CODE=$?" >> $GITHUB_ENV
 
-      # 🎯 Detect result
+      # 🎯 Evaluate correctly
       - name: Evaluate Result
         id: result
         run: |
-          if [ "${{ steps.test.outcome }}" == "failure" ]; then
-            echo "failed=true" >> $GITHUB_OUTPUT
+          echo "Exit code: $PYTEST_EXIT_CODE"
+
+          if [ "$PYTEST_EXIT_CODE" -eq 1 ]; then
+            echo "test_failed=true" >> $GITHUB_OUTPUT
           else
-            echo "failed=false" >> $GITHUB_OUTPUT
+            echo "test_failed=false" >> $GITHUB_OUTPUT
           fi
 
-      # ❌ Jira on failure
+      # ❌ Jira ONLY for REAL test failures
       - name: Create Jira Ticket
-        if: steps.result.outputs.failed == 'true'
+        if: steps.result.outputs.test_failed == 'true'
         env:
           JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
@@ -55,7 +57,7 @@ jobs:
           JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
           JIRA_ISSUE_TYPE: ${{ vars.JIRA_ISSUE_TYPE }}
         run: |
-          echo "Creating Jira ticket..."
+          echo "Creating Jira ticket (test failure only)..."
 
           curl -X POST \
             -u "$JIRA_EMAIL:$JIRA_API_TOKEN" \
@@ -71,7 +73,7 @@ jobs:
                     \"type\": \"paragraph\",
                     \"content\": [{
                       \"type\": \"text\",
-                      \"text\": \"Pytest failed in CI pipeline\"
+                      \"text\": \"Test cases failed (assertion failure)\"
                     }]
                   }]
                 },
@@ -80,9 +82,9 @@ jobs:
             }" \
             "$JIRA_BASE_URL/rest/api/3/issue"
 
-      # ✅ PR on success
+      # ✅ PR ONLY if ALL tests pass
       - name: Create Pull Request
-        if: steps.result.outputs.failed == 'false'
+        if: steps.result.outputs.test_failed == 'false'
         run: |
           echo "Creating PR..."
 
