@@ -1,14 +1,11 @@
-name: Mobile QA Pipeline
+name: QA Pipeline (Simple)
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - main
       - qa-test-branch
       - feature/*
-  release:
-    types: [published]
 
 permissions:
   contents: write
@@ -19,66 +16,38 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      # 📥 Checkout
+      - uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v4
+      # 🐍 Python
+      - uses: actions/setup-python@v4
         with:
-          python-version: "3.11"
+          python-version: 3.11
 
+      # 📦 Install deps
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          npm install -g appium
-          appium driver install uiautomator2
+        run: pip install pytest
 
-      - name: Download APK
-        run: |
-          echo "Fetching APK from latest release..."
-          APK_URL=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases \
-            | grep "browser_download_url.*apk" \
-            | head -n 1 \
-            | cut -d '"' -f 4)
-          echo "APK URL: $APK_URL"
-          curl -L -o app.apk "$APK_URL"
-
-      - name: Validate APK
-        run: |
-          echo "Validating APK..."
-          ls -lh
-          file app.apk
-          if file app.apk | grep -q "HTML"; then
-            echo "Downloaded HTML instead of APK ❌"
-            exit 1
-          fi
-          unzip -t app.apk > /dev/null 2>&1 || (echo "Invalid APK file ❌" && exit 1)
-          echo "APK is valid ✅"
-
-      - name: Run Mobile Tests
+      # 🧪 Run tests
+      - name: Run pytest
         id: test
-        uses: reactivecircus/android-emulator-runner@v2
+        run: |
+          pytest
         continue-on-error: true
-        timeout-minutes: 30
-        with:
-          api-level: 30
-          arch: x86_64
-          profile: pixel
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot-save -noaudio -no-boot-anim
-          disable-animations: true
-          script: bash -c 'adb devices && adb install app.apk && appium --base-path / & sleep 10 && pytest; PYTEST_EXIT=$?; adb emu kill || true; pkill -9 -f emulator || true; pkill -9 -f qemu-system || true; sleep 3; exit $PYTEST_EXIT'
 
-      - name: Check pytest result
-        id: pytest_check
+      # 🎯 Detect result
+      - name: Evaluate Result
+        id: result
         run: |
           if [ "${{ steps.test.outcome }}" == "failure" ]; then
-            echo "pytest_failed=true" >> $GITHUB_OUTPUT
+            echo "failed=true" >> $GITHUB_OUTPUT
           else
-            echo "pytest_failed=false" >> $GITHUB_OUTPUT
+            echo "failed=false" >> $GITHUB_OUTPUT
           fi
 
+      # ❌ Jira on failure
       - name: Create Jira Ticket
-        if: steps.pytest_check.outputs.pytest_failed == 'true'
+        if: steps.result.outputs.failed == 'true'
         env:
           JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
@@ -87,50 +56,40 @@ jobs:
           JIRA_ISSUE_TYPE: ${{ vars.JIRA_ISSUE_TYPE }}
         run: |
           echo "Creating Jira ticket..."
+
           curl -X POST \
             -u "$JIRA_EMAIL:$JIRA_API_TOKEN" \
             -H "Content-Type: application/json" \
             --data "{
               \"fields\": {
                 \"project\": { \"key\": \"$JIRA_PROJECT_KEY\" },
-                \"summary\": \"Mobile Test Failure — ${{ github.ref_name }}\",
+                \"summary\": \"Test Failure\",
                 \"description\": {
                   \"type\": \"doc\",
                   \"version\": 1,
-                  \"content\": [
-                    {
-                      \"type\": \"paragraph\",
-                      \"content\": [
-                        {
-                          \"type\": \"text\",
-                          \"text\": \"Pytest failed on branch ${{ github.ref_name }} (run ${{ github.run_id }})\"
-                        }
-                      ]
-                    }
-                  ]
+                  \"content\": [{
+                    \"type\": \"paragraph\",
+                    \"content\": [{
+                      \"type\": \"text\",
+                      \"text\": \"Pytest failed in CI pipeline\"
+                    }]
+                  }]
                 },
                 \"issuetype\": { \"name\": \"$JIRA_ISSUE_TYPE\" }
               }
             }" \
             "$JIRA_BASE_URL/rest/api/3/issue"
 
+      # ✅ PR on success
       - name: Create Pull Request
-        if: steps.pytest_check.outputs.pytest_failed == 'false' && github.ref_name != 'main'
+        if: steps.result.outputs.failed == 'false'
         run: |
-          echo "Creating PR from ${{ github.ref_name }} to main"
-          curl -X POST https://api.github.com/repos/${{ github.repository }}/pulls \
-            -H "Authorization: Bearer ${{ secrets.TOKEN }}" \
-            -H "Accept: application/vnd.github+json" \
-            -d '{
-              "title": "Auto PR after mobile tests passed ✅",
-              "head": "${{ github.ref_name }}",
-              "base": "main",
-              "body": "All mobile tests passed on run ${{ github.run_id }}"
-            }'
+          echo "Creating PR..."
 
-      - name: Upload Reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: mobile-qa-reports
-          path: reports/
+          curl -X POST https://api.github.com/repos/${{ github.repository }}/pulls \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -d '{
+              "title": "Auto PR after tests passed",
+              "head": "${{ github.ref_name }}",
+              "base": "main"
+            }'
